@@ -1,4 +1,4 @@
-BF Heredity 0.2.0（試作）
+BF Heredity 0.3.0（試作）
 =========================
 Beeing Female NG で生まれたプレイヤーの子供について、次の2つを変えます。
 ・父母の見た目を受け継ぐ：髪色、髪型、目、眉、顔の形、肌の色
@@ -25,6 +25,10 @@ MO2 でこのzipをインストールし、BFHeredity.esp を有効にします�
   - Fill Her Up：そのNPCを相手として膨らむ。量は Fill Her Up でその種族に設定した量 × 等級（100%は1倍、50%は0.75倍、30%は0.5倍）
   - Beeing Female：表示の確率で、そのNPCの子を妊娠する（父親として記録されるので、子供の見た目も受け継ぎます）
 ・保管できるのは最大128種類です。
+
+■ 声（0.3.0〜）
+・採取中は相手の男性NPCに SexLab の声（だんだん強くなる）、挿入時はプレイヤーに SexLab の声が鳴ります。
+  声の種類はキャラごとに固定です。BFHeredity.ini の bSounds=0 で無効にできます。
 
 ■ アニメーション
 ・Soulgem Oven 4（darkconsole 作、BSD 3-Clause、LICENSE_SoulgemOven4.txt）の採取・挿入アニメーションを
