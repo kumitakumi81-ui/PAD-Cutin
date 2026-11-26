@@ -13,6 +13,7 @@
 //    The name goes through FWChildActor.SetName, which writes FW.Child.Name, so it survives loading.
 
 #include "PoolData.h"
+#include "MenuApi.h"
 
 namespace
 {
@@ -63,6 +64,28 @@ namespace
 		float         insertSeconds = 4.0f;   // length of the insertion animation before it is in
 		bool          sounds = true;          // SexLab voices during collection / insertion
 		float         voiceInterval = 2.5f;
+		// camera (PAD Cutin / KSAB camera work): whole body -> circle -> face -> back
+		bool  camera = true;
+		// fields read by Cutin.h
+		bool  cutinPlayer = true;
+		float cutinSlowMo = 0.6f;
+		float cutinLength = 2.4f;
+		float cutinPartDistance = 150.0f;
+		float cutinFaceDistance = 75.0f;
+		float cutinHitStop = 0.0f;
+		bool  cutinFlash = false;
+		float cutinFlashStrength = 0.3f;
+		bool  cutinLetterbox = true;
+		bool  cutinBlur = false;
+		float cutinShake = 0.0f;
+		bool  cutinRandomAngle = true;
+		bool  cutinFaceAction = false;
+		float cutinDutch = 4.0f;
+		bool  cutinSpeedLines = false;
+		bool  cutinVignette = true;
+		float cutinCooldown = 0.0f;
+		bool  cutinHold = true;
+		float cutinHoldRadius = 24.0f;
 	};
 	Settings g_settings;
 
@@ -117,6 +140,19 @@ namespace
 				g_settings.fhuAmount = static_cast<float>(std::atof(val.c_str()));
 			} else if (key == "bmaleonly") {
 				g_settings.maleOnly = b();
+			} else if (key == "bcamera") {
+				g_settings.camera = b();
+				g_settings.cutinPlayer = g_settings.camera;
+			} else if (key == "fcameraslowmo") {
+				g_settings.cutinSlowMo = static_cast<float>(std::atof(val.c_str()));
+			} else if (key == "fcamerabodydistance") {
+				g_settings.cutinPartDistance = static_cast<float>(std::atof(val.c_str()));
+			} else if (key == "fcamerafacedistance") {
+				g_settings.cutinFaceDistance = static_cast<float>(std::atof(val.c_str()));
+			} else if (key == "bcameraletterbox") {
+				g_settings.cutinLetterbox = b();
+			} else if (key == "bcameravignette") {
+				g_settings.cutinVignette = b();
 			} else if (key == "bsounds") {
 				g_settings.sounds = b();
 			} else if (key == "fvoiceinterval") {
@@ -131,6 +167,18 @@ namespace
 		}
 		Log("settings: inherit={} nameOnBirth={} renameKey=0x{:X} hair={} eyes={} face={} skin={}", g_settings.inherit, g_settings.nameOnBirth,
 			g_settings.renameKey, g_settings.hairStyle, g_settings.eyes, g_settings.faceShape, g_settings.skinTone);
+	}
+
+#include "Cutin.h"
+
+	// whole body (body slot) -> face, the cut lasting about a_seconds
+	void Camera(RE::Actor* a, float a_seconds)
+	{
+		if (!a || !g_settings.camera) {
+			return;
+		}
+		g_settings.cutinLength = std::clamp(a_seconds / 3.25f, 0.3f, 4.0f);
+		Cutin::Request(a, 1u << (32 - 30));
 	}
 
 	// ------------------------------------------------------------------ Papyrus calls
@@ -826,6 +874,7 @@ namespace
 
 	std::atomic_bool g_dnaBusy = false;
 	std::atomic_bool g_collecting = false;
+	std::atomic_bool g_inserting = false;
 	void             GiveDna(RE::FormID a_id);
 
 	void CollectFrom(RE::Actor* a);
@@ -865,6 +914,7 @@ namespace
 			HoldNpc(a, true);
 			g_collecting = true;
 			VoiceLoop(id, 0.0f, g_settings.collectSeconds, [] { return g_collecting.load(); });
+			Camera(a, g_settings.collectSeconds);
 			Later(g_settings.collectSeconds, [id] {
 				auto a = RE::TESForm::LookupByID<RE::Actor>(id);
 				g_collecting = false;
@@ -988,7 +1038,7 @@ namespace
 				return RE::BSEventNotifyControl::kContinue;
 			}
 			const RE::FormID who = a_event->speakerRef->GetFormID();
-			Later(0.5f, [who] {  // let the dialogue menu close first
+			Later(1.0f, [who] {  // let the dialogue menu close first
 				CollectFrom(RE::TESForm::LookupByID<RE::Actor>(who));
 			});
 			return RE::BSEventNotifyControl::kContinue;
@@ -1003,9 +1053,12 @@ namespace
 		// Soulgem Oven's insertion animation, then it is in
 		if (Anim(pc, "bfh-insert01")) {
 			HoldPlayer(true);
-			Voice(pc, Heat::kMild);
+			g_inserting = true;
+			VoiceLoop(pc->GetFormID(), 0.0f, g_settings.insertSeconds, [] { return g_inserting.load(); });
+			Camera(pc, g_settings.insertSeconds + 1.0f);
 			Later(g_settings.insertSeconds, [a_item] {
-				Voice(RE::PlayerCharacter::GetSingleton(), Heat::kMedium);
+				g_inserting = false;
+				Voice(RE::PlayerCharacter::GetSingleton(), Heat::kHot);
 				if (auto d = DnaByItem(a_item)) {
 					InjectDna(*d);
 				}
@@ -1340,6 +1393,16 @@ namespace
 		switch (a_msg->type) {
 		case SKSE::MessagingInterface::kDataLoaded:
 			LoadSettings();
+			Cutin::InstallHooks();
+			if (KKMenu::Installed()) {
+				KKMenu::RegisterHudElement(Cutin::DrawLetterbox);
+			}
+			std::thread([] {
+				for (;;) {
+					std::this_thread::sleep_for(50ms);
+					SKSE::GetTaskInterface()->AddTask([] { Cutin::Poll(); });
+				}
+			}).detach();
 			BuildSlots();
 			BuildDna();
 			if (auto holder = RE::ScriptEventSourceHolder::GetSingleton()) {
@@ -1357,6 +1420,7 @@ namespace
 			break;
 		case SKSE::MessagingInterface::kPreLoadGame:
 			g_ready = false;
+			SKSE::GetTaskInterface()->AddTask([] { Cutin::Stop("game load"); });
 			break;
 		case SKSE::MessagingInterface::kPostLoadGame:
 		case SKSE::MessagingInterface::kNewGame:
