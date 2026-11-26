@@ -6,27 +6,45 @@
     {
       "pageDisplayName": "演出",
       "content": [
-        { "type": "header", "text": "採取・挿入の演出" },
+        {
+          "type": "header",
+          "text": "採取・挿入の演出"
+        },
+        {
+          "id": "bDropBottle:DNA",
+          "text": "採取した瓶を足元に落とす",
+          "type": "toggle",
+          "help": "オン：採取した精液の瓶が相手の足元に落ち、拾って入手。オフ：直接インベントリへ",
+          "valueOptions": {
+            "sourceType": "ModSettingBool"
+          }
+        },
         {
           "id": "bCamera:Camera",
           "text": "カメラワーク",
           "type": "toggle",
           "help": "採取・挿入のときのカメラ演出（黒帯・スロー付き）のあり／なし",
-          "valueOptions": { "sourceType": "ModSettingBool" }
+          "valueOptions": {
+            "sourceType": "ModSettingBool"
+          }
         },
         {
           "id": "bSounds:DNA",
           "text": "声",
           "type": "toggle",
           "help": "採取・挿入のときの声のあり／なし",
-          "valueOptions": { "sourceType": "ModSettingBool" }
+          "valueOptions": {
+            "sourceType": "ModSettingBool"
+          }
         },
         {
           "id": "bAnimations:DNA",
           "text": "アニメーション",
           "type": "toggle",
           "help": "採取・挿入のときのアニメーションのあり／なし",
-          "valueOptions": { "sourceType": "ModSettingBool" }
+          "valueOptions": {
+            "sourceType": "ModSettingBool"
+          }
         }
       ]
     }
