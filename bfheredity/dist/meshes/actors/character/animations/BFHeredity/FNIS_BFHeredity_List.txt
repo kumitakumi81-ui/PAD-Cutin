@@ -1,11 +1,5 @@
 Version 1.0
 
-' BF Heredity - semen collection / insertion animations
-' Animations from Soulgem Oven 4 by darkconsole (BSD 3-Clause), renamed so they do not clash with SGO4IF.
-
-' collection: loop while collecting, then the finish
-b -AVbHumanoidFootIKDisable bfh-collect01-01 bfh-wanking01-02.hkx
-b -AVbHumanoidFootIKDisable,a bfh-collect01-03 bfh-wanking01-03.hkx
-
-' insertion
-b -AVbHumanoidFootIKDisable,a bfh-insert01 bfh-insert01-01.hkx
+b bfh-collect01-01 bfh-wanking01-02.hkx
+b -a bfh-collect01-03 bfh-wanking01-03.hkx
+b -a bfh-insert01 bfh-insert01-01.hkx
