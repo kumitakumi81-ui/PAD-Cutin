@@ -12,14 +12,24 @@ jobs:
         run: |
           git clone --depth 1 --branch v9.3.0 https://github.com/alandtse/CommonLibVR.git extern/CommonLibSSE-NG
           git -C extern/CommonLibSSE-NG submodule update --init --recursive --depth 1
-      - uses: lukka/get-cmake@latest
-      - uses: lukka/run-vcpkg@v11
+      - name: vcpkg
+        shell: pwsh
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git "$env:RUNNER_TEMP\vcpkg"
+          & "$env:RUNNER_TEMP\vcpkg\bootstrap-vcpkg.bat" -disableMetrics
+          "VCPKG_ROOT=$env:RUNNER_TEMP\vcpkg" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - uses: actions/cache@v4
         with:
-          vcpkgGitCommitId: 99a97de2cb371449d4fb9dc970f2ac562d689ec2
+          path: ${{ runner.temp }}/vcpkg-bincache
+          key: vcpkg-${{ hashFiles('vcpkg.json') }}-v1
       - uses: ilammy/msvc-dev-cmd@v1
       - name: Configure
         shell: cmd
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=%VCPKG_ROOT%/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-windows-static-md -DCOMMONLIB_PREBUILT=OFF
+        run: |
+          set VCPKG_DEFAULT_BINARY_CACHE=%RUNNER_TEMP%\vcpkg-bincache
+          if not exist "%VCPKG_DEFAULT_BINARY_CACHE%" mkdir "%VCPKG_DEFAULT_BINARY_CACHE%"
+          echo VCPKG_ROOT=%VCPKG_ROOT%
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="%VCPKG_ROOT%\scripts\buildsystems\vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static-md -DCOMMONLIB_PREBUILT=OFF
       - name: Build
         shell: cmd
         run: cmake --build build --target PADCutin
