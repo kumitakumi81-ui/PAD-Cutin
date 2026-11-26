@@ -1,0 +1,16 @@
+{
+  "name": "padcutin",
+  "version-string": "1.0.0",
+  "builtin-baseline": "99a97de2cb371449d4fb9dc970f2ac562d689ec2",
+  "dependencies": [
+    "spdlog",
+    "fmt",
+    "directxtk",
+    "directxmath",
+    "rapidcsv",
+    "xbyak",
+    "simpleini",
+    "nlohmann-json",
+    "toml11"
+  ]
+}
