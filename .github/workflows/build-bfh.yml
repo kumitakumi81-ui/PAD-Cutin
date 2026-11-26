@@ -43,7 +43,10 @@ jobs:
           cp build/BFHeredity.dll out/SKSE/Plugins/
           cp bfheredity/dist/SKSE/Plugins/BFHeredity.ini out/SKSE/Plugins/
           cp bfheredity/dist/BFHeredity.esp out/
-          cp -r bfheredity/dist/SEQ bfheredity/dist/meshes out/
+          cp -r bfheredity/dist/SEQ out/
+          mkdir -p out/meshes/actors/character/animations out/meshes/actors/character/behaviors
+          cp -r bfheredity/dist/meshes/actors/character/animations/dse-soulgem-oven out/meshes/actors/character/animations/
+          cp bfheredity/dist/meshes/actors/character/behaviors/FNIS_dse-soulgem-oven_Behavior.hkx out/meshes/actors/character/behaviors/
           cp bfheredity/dist/LICENSE_SoulgemOven4.txt out/
           cp bfheredity/README_ja.txt LICENSE.txt THIRD_PARTY_NOTICES.txt out/
       - uses: actions/upload-artifact@v4
