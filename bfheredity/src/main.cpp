@@ -302,6 +302,45 @@ namespace
 		return !a_part->validRaces || a_part->validRaces->HasForm(a_race);
 	}
 
+	std::vector<RE::BGSHeadPart*> PartsForRace(RE::BGSHeadPart::HeadPartType a_type, RE::TESRace* a_race, bool a_female)
+	{
+		std::vector<RE::BGSHeadPart*> out;
+		auto dh = RE::TESDataHandler::GetSingleton();
+		if (!dh || !a_race) {
+			return out;
+		}
+		for (auto p : dh->GetFormArray<RE::BGSHeadPart>()) {
+			if (!p || p->type.get() != a_type || !p->flags.all(RE::BGSHeadPart::Flag::kPlayable) || p->flags.all(RE::BGSHeadPart::Flag::kIsExtraPart) || !p->validRaces || !p->validRaces->HasForm(a_race)) {
+				continue;
+			}
+			const bool male = p->flags.all(RE::BGSHeadPart::Flag::kMale);
+			const bool female = p->flags.all(RE::BGSHeadPart::Flag::kFemale);
+			if ((a_female && !female && male) || (!a_female && !male && female)) {
+				continue;
+			}
+			out.push_back(p);
+		}
+		return out;
+	}
+
+	// does this parent's (adult) race give the copy's child race? (PoolData race table)
+	bool RaceMatches(const Slot& a_slot, RE::TESNPC* a_parent)
+	{
+		if (!a_parent || !a_parent->race) {
+			return false;
+		}
+		auto dh = RE::TESDataHandler::GetSingleton();
+		for (auto& r : PoolData::kRaces) {
+			if (r.female != a_slot.orig && r.male != a_slot.orig) {
+				continue;
+			}
+			if (dh->LookupForm<RE::TESRace>(r.id, r.plugin) == a_parent->race) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	RE::TESNPC* LooksOf(RE::FormID a_id)
 	{
 		auto a = a_id ? RE::TESForm::LookupByID<RE::Actor>(a_id) : nullptr;
@@ -321,7 +360,15 @@ namespace
 		auto         coin = [&] { return (rng() & 1u) != 0; };
 		auto         pick = [&](bool a_dad) -> RE::TESNPC* { return a_dad ? (dad ? dad : mom) : (mom ? mom : dad); };
 
-		if (auto src = pick(coin()); src && src->headRelatedData && src->headRelatedData->hairColor) {
+		bool hairFromDad = coin();
+		if (mom && dad && mom->race != dad->race) {
+			const bool momRace = RaceMatches(a_slot, mom);
+			const bool dadRace = RaceMatches(a_slot, dad);
+			if (momRace != dadRace) {
+				hairFromDad = momRace;  // the child looks like one parent's race, the hair comes from the other one
+			}
+		}
+		if (auto src = pick(hairFromDad); src && src->headRelatedData && src->headRelatedData->hairColor) {
 			L.hairColor = src->headRelatedData->hairColor->GetFormID();
 		}
 		auto part = [&](RE::BGSHeadPart::HeadPartType a_type) -> RE::FormID {
@@ -337,6 +384,13 @@ namespace
 		};
 		if (g_settings.hairStyle) {
 			L.hair = part(RE::BGSHeadPart::HeadPartType::kHair);
+			if (!L.hair) {
+				auto self = RE::TESForm::LookupByID<RE::TESNPC>(a_slot.base);
+				auto list = PartsForRace(RE::BGSHeadPart::HeadPartType::kHair, a_race, self && self->IsFemale());
+				if (!list.empty()) {
+					L.hair = list[rng() % list.size()]->GetFormID();
+				}
+			}
 			L.brows = part(RE::BGSHeadPart::HeadPartType::kEyebrows);
 		}
 		if (g_settings.eyes) {
