@@ -47,6 +47,11 @@ jobs:
           mkdir -p out/meshes/actors/character/animations out/meshes/actors/character/behaviors
           cp -r bfheredity/dist/meshes/actors/character/animations/dse-soulgem-oven out/meshes/actors/character/animations/
           cp bfheredity/dist/meshes/actors/character/behaviors/FNIS_dse-soulgem-oven_Behavior.hkx out/meshes/actors/character/behaviors/
+          cp -r bfheredity/dist/meshes/dse-soulgem-oven bfheredity/dist/meshes/BFHeredity out/meshes/
+          # SGO4's bottle textures, from its public repository (GPL)
+          base=https://raw.githubusercontent.com/darkconsole/dse-soulgem-oven/master/textures/dse-soulgem-oven
+          mkdir -p out/textures/dse-soulgem-oven/labels
+          for t in Glass.d Glass.n Cork.d Cork.n Milk.d Milk.n labels/Milk.d; do curl -fsSL -o "out/textures/dse-soulgem-oven/$t.dds" "$base/$t.dds"; done
           cp bfheredity/dist/LICENSE_SoulgemOven4.txt out/
           cp bfheredity/README_ja.txt LICENSE.txt THIRD_PARTY_NOTICES.txt out/
       - uses: actions/upload-artifact@v4
