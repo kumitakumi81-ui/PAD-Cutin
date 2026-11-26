@@ -1,4 +1,4 @@
-PAD Cutin 1.0.0
+PAD Cutin 1.1.0
 ===============
 Procedural Armor Damage (PAD) で防具が壊れた瞬間に、スローモーションのカットインを入れる SKSE プラグインです。
 カメラワークは Kagura Style Armor Break 1.2.0 (miyata0105, GPL-3.0) の Cutin.h をもとにしています。
@@ -18,6 +18,13 @@ Procedural Armor Damage (PAD) で防具が壊れた瞬間に、スローモー�
 ヒットストップ → スロー → 壊れた部位へカメラが回り込む → 顔へ移動(傾き・小さな動き) → 元の視点へ
 白フラッシュ / 放射ブラー / カメラの揺れ / 上下黒帯 / 周辺を暗く。毎回アングルが変わります。
 KSAB と一緒に入れても動きます (同じカメラのフックを順に通ります)。
+
+■ Modesty 連携 (1.1.0)
+Dynamic Feminine Female Modesty Animations (OAR) が入っていると、胴・腰・下着の服が fModestyIntegrity % 以下まで
+破れたとき、その服に Modesty キーワードを付けて「隠すしぐさ」の待機・歩きアニメーションに切り替えます。
+修理すると外れて普通のアニメーションに戻ります。状態はセーブに保存されます。
+・Modesty 側の「Female PC Detection ON/OFF」がオンだと、NPC に見られているときだけ切り替わります
+  (常に切り替えたいときは OAR のメニューでそのサブMODをオフに)
 
 ■ ライセンス
 GPL-3.0-or-later (LICENSE.txt)。CommonLibSSE-NG v9.3.0 を使用しています (THIRD_PARTY_NOTICES.txt)。

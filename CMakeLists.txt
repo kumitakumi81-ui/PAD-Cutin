@@ -2,7 +2,7 @@
 # Camera work adapted from Kagura Style Armor Break 1.2.0 (C) 2026 miyata0105
 # SPDX-License-Identifier: GPL-3.0-or-later
 cmake_minimum_required(VERSION 3.21)
-project(PADCutin VERSION 1.0.0 LANGUAGES CXX)
+project(PADCutin VERSION 1.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
