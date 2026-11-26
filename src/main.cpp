@@ -56,6 +56,10 @@ namespace
 		float cutinCooldown = 15.0f;
 		bool  cutinHold = true;
 		float cutinHoldRadius = 24.0f;
+		// Modesty bridge (Dynamic Feminine Female Modesty Animations): torn clothes get its "Modesty" keyword
+		bool  modesty = true;
+		float modestyIntegrity = 60.0f;
+		bool  modestyCutin = true;
 	};
 	Settings g_settings;
 
@@ -164,6 +168,10 @@ namespace
 		s.cutinCooldown = ini.F(C, "fCutinCooldown", s.cutinCooldown);
 		s.cutinHold = ini.B(C, "bCutinHold", s.cutinHold);
 		s.cutinHoldRadius = ini.F(C, "fCutinHoldRadius", s.cutinHoldRadius);
+		const char* M = "Modesty";
+		s.modesty = ini.B(M, "bModesty", s.modesty);
+		s.modestyIntegrity = ini.F(M, "fModestyIntegrity", s.modestyIntegrity);
+		s.modestyCutin = ini.B(M, "bModestyCutin", s.modestyCutin);
 		Log("settings loaded: break={} heavyTear={}({:.0f}) slowmo={:.2f} length={:.2f} part={:.0f} face={:.0f}", s.onBreak, s.onHeavyTear,
 			s.heavyTearIntegrity, s.cutinSlowMo, s.cutinLength, s.cutinPartDistance, s.cutinFaceDistance);
 	}
@@ -197,6 +205,107 @@ namespace
 		return armo ? armo->GetSlotMask().underlying() : 0u;
 	}
 
+
+	// ------------------------------------------------------------------ Modesty bridge
+	// Dynamic Feminine Female Modesty Animations switches the idle / walk set when a garment in the body (32), waist (49) or
+	// underwear (52) slot carries its "Modesty" keyword (Modesty_Keyword.esp 000D59). A garment torn below fModestyIntegrity
+	// gets that keyword for as long as it stays torn; the repair takes it off again. Kept in the SKSE co-save.
+	constexpr std::uint32_t kModestySlots = (1u << (32 - 30)) | (1u << (49 - 30)) | (1u << (52 - 30));
+	std::unordered_map<RE::FormID, bool> g_modesty;  // armor -> the keyword was added by us (false: it already had it)
+
+	RE::BGSKeyword* ModestyKeyword()
+	{
+		static RE::BGSKeyword* s_kw = [] {
+			auto dh = RE::TESDataHandler::GetSingleton();
+			auto kw = dh ? dh->LookupForm<RE::BGSKeyword>(0xD59, "Modesty_Keyword.esp") : nullptr;
+			Log("Modesty keyword {}", kw ? std::format("{:08X}", kw->GetFormID()) : "not found (Modesty_Keyword.esp missing): the Modesty bridge is off"s);
+			return kw;
+		}();
+		return s_kw;
+	}
+
+	bool ApplyModesty(RE::FormID a_id)
+	{
+		auto armo = RE::TESForm::LookupByID<RE::TESObjectARMO>(a_id);
+		auto kw = ModestyKeyword();
+		if (!armo || !kw || g_modesty.contains(a_id)) {
+			return false;
+		}
+		const bool had = armo->HasKeyword(kw);
+		if (!had) {
+			armo->AddKeyword(kw);
+		}
+		g_modesty[a_id] = !had;
+		Log("modesty on: {:08X}{}", a_id, had ? " (already had the keyword)" : "");
+		return true;
+	}
+
+	void ClearModesty(RE::FormID a_id)
+	{
+		auto it = g_modesty.find(a_id);
+		if (it == g_modesty.end()) {
+			return;
+		}
+		auto armo = RE::TESForm::LookupByID<RE::TESObjectARMO>(a_id);
+		if (it->second && armo && ModestyKeyword()) {
+			armo->RemoveKeyword(ModestyKeyword());
+		}
+		g_modesty.erase(it);
+		Log("modesty off: {:08X}", a_id);
+	}
+
+	void ClearAllModesty()
+	{
+		std::vector<RE::FormID> ids;
+		for (auto& [id, added] : g_modesty) {
+			ids.push_back(id);
+		}
+		for (auto id : ids) {
+			ClearModesty(id);
+		}
+	}
+
+	constexpr std::uint32_t kSerUid = 'PADC';
+	constexpr std::uint32_t kSerModesty = 'MODS';
+
+	void OnSave(SKSE::SerializationInterface* a_ser)
+	{
+		if (!a_ser->OpenRecord(kSerModesty, 1)) {
+			return;
+		}
+		const std::uint32_t n = static_cast<std::uint32_t>(g_modesty.size());
+		a_ser->WriteRecordData(n);
+		for (auto& [id, added] : g_modesty) {
+			a_ser->WriteRecordData(id);
+		}
+	}
+
+	void OnRevert(SKSE::SerializationInterface*)
+	{
+		ClearAllModesty();
+	}
+
+	void OnLoad(SKSE::SerializationInterface* a_ser)
+	{
+		ClearAllModesty();
+		std::uint32_t type, version, length;
+		while (a_ser->GetNextRecordInfo(type, version, length)) {
+			if (type != kSerModesty) {
+				continue;
+			}
+			std::uint32_t n = 0;
+			a_ser->ReadRecordData(n);
+			for (std::uint32_t i = 0; i < n; ++i) {
+				RE::FormID old = 0, now = 0;
+				a_ser->ReadRecordData(old);
+				if (a_ser->ResolveFormID(old, now)) {
+					ApplyModesty(now);
+				}
+			}
+		}
+		Log("co-save: {} torn garment(s) restored", g_modesty.size());
+	}
+
 	class ModEventSink : public RE::BSTEventSink<SKSE::ModCallbackEvent>
 	{
 	public:
@@ -224,6 +333,11 @@ namespace
 						Cutin::Request(player, mask);
 					}
 				} else if (ev == "ArmorTear_OnTear") {
+					if (g_settings.modesty && (mask & kModestySlots) && num <= g_settings.modestyIntegrity && !g_modesty.contains(id)) {
+						if (ApplyModesty(id) && g_settings.modestyCutin) {
+							Cutin::Request(player, mask);
+						}
+					}
 					if (g_settings.onHeavyTear && num <= g_settings.heavyTearIntegrity && !g_heavyDone.contains(id)) {
 						g_heavyDone.insert(id);
 						Log("PAD: armor {:08X} heavily torn ({:.0f}%)", id, num);
@@ -231,6 +345,7 @@ namespace
 					}
 				} else if (ev == "ArmorTear_OnRepaired") {
 					g_heavyDone.erase(id);
+					ClearModesty(id);
 				}
 			});
 			return RE::BSEventNotifyControl::kContinue;
@@ -264,6 +379,7 @@ namespace
 		case SKSE::MessagingInterface::kDataLoaded:
 			LoadSettings();
 			Cutin::InstallHooks();
+			ModestyKeyword();
 			if (auto src = SKSE::GetModCallbackEventSource()) {
 				src->AddEventSink(&g_modSink);
 				Log("listening for Procedural Armor Damage events");
@@ -301,5 +417,11 @@ SKSEPluginLoad(const SKSE::LoadInterface* a_skse)
 	OpenLog();
 	Log("PAD Cutin {} runtime={}", PADCUTIN_VERSION_STRING, REL::Module::get().version().string());
 	SKSE::GetMessagingInterface()->RegisterListener(OnMessage);
+	if (auto ser = SKSE::GetSerializationInterface()) {
+		ser->SetUniqueID(kSerUid);
+		ser->SetSaveCallback(OnSave);
+		ser->SetLoadCallback(OnLoad);
+		ser->SetRevertCallback(OnRevert);
+	}
 	return true;
 }
