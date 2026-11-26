@@ -53,7 +53,7 @@ namespace
 		bool          skinTone = true;
 		// DNA
 		bool          dna = true;
-		std::uint32_t collectKey = 0x24;  // J
+		std::uint32_t collectKey = 0;  // optional hotkey (0 = only through dialogue)
 		float         virility100 = 0.9f;  // Beeing Female virility (stored sperm, 0.02 - 1.0) at or above this: 100 %
 		float         virility50 = 0.5f;   // at or above this: 50 %, below: 30 %
 		float         fhuAmount = 1.0f;
@@ -646,7 +646,7 @@ namespace
 					continue;
 				}
 				const auto code = b->GetIDCode();
-				if (code != g_settings.renameKey && code != g_settings.collectKey) {
+				if (code != g_settings.renameKey && (g_settings.collectKey == 0 || code != g_settings.collectKey)) {
 					continue;
 				}
 				auto ui = RE::UI::GetSingleton();
@@ -667,7 +667,7 @@ namespace
 
 	// ------------------------------------------------------------------ DNA
 	// "J" while aiming at an NPC: collect their DNA. Every NPC gets one of the 128 DNA items in BFHeredity.esp, renamed to
-	// "<name>のDNA（<race>・<n>%）". Using (drinking) it puts it inside: Fill Her Up inflates with that NPC as the injector, and
+	// "<name>の精液（<race>・<n>%）". Using (drinking) it puts it inside: Fill Her Up inflates with that NPC as the injector, and
 	// Beeing Female makes the player pregnant by that NPC with the item's chance (30 / 50 / 100 %, fixed per NPC).
 	struct Dna
 	{
@@ -787,14 +787,20 @@ namespace
 	std::atomic_bool g_dnaBusy = false;
 	void             GiveDna(RE::FormID a_id);
 
+	void CollectFrom(RE::Actor* a);
+
 	void CollectDna()
+	{
+		auto pick = RE::CrosshairPickData::GetSingleton();
+		auto ref = pick ? pick->GetActiveTarget().get() : nullptr;
+		CollectFrom(ref ? ref->As<RE::Actor>() : nullptr);
+	}
+
+	void CollectFrom(RE::Actor* a)
 	{
 		if (!g_settings.dna) {
 			return;
 		}
-		auto pick = RE::CrosshairPickData::GetSingleton();
-		auto ref = pick ? pick->GetActiveTarget().get() : nullptr;
-		auto a = ref ? ref->As<RE::Actor>() : nullptr;
 		auto pc = RE::PlayerCharacter::GetSingleton();
 		if (!a || a == pc || a->IsChild()) {
 			return;
@@ -802,11 +808,11 @@ namespace
 		auto base = a->GetActorBase();
 		auto race = a->GetRace();
 		if (!base || !race || !race->HasKeywordString("ActorTypeNPC")) {
-			Notify("この相手からはDNAを採取できません");
+			Notify("この相手からは採取できません");
 			return;
 		}
 		if (g_settings.maleOnly && base->GetSex() != RE::SEX::kMale) {
-			Notify("DNAは男性からのみ採取できます");
+			Notify("男性からのみ採取できます");
 			return;
 		}
 		if (g_dnaBusy.exchange(true)) {
@@ -814,12 +820,12 @@ namespace
 		}
 		const RE::FormID id = a->GetFormID();
 		// Soulgem Oven's extraction animation (dse-sgo-wanking01-01 -> 02 loop -> 03), then the DNA drops
-		if (Anim(a, "dse-sgo-wanking01-01")) {
+		if (Anim(a, "bfh-collect01-01")) {
 			HoldNpc(a, true);
 			Later(g_settings.collectSeconds, [id] {
 				auto a = RE::TESForm::LookupByID<RE::Actor>(id);
 				GiveDna(id);
-				Anim(a, "dse-sgo-wanking01-03");
+				Anim(a, "bfh-collect01-03");
 				Later(2.5f, [id] {
 					auto a = RE::TESForm::LookupByID<RE::Actor>(id);
 					Anim(a, "IdleForceDefaultState");
@@ -865,14 +871,14 @@ namespace
 						}
 					}
 					if (!d) {
-						Notify("DNAの保管枠がいっぱいです");
+						Notify("精液の保管枠がいっぱいです");
 						return;
 					}
 					auto race = a->GetRace();
 					d->tier = tier;
 					d->owner = id;
 					d->race = race ? race->GetFormID() : 0;
-					d->name = std::string(a->GetDisplayFullName() ? a->GetDisplayFullName() : "?") + "のDNA（" + RaceName(race) + "・" + std::to_string(tier) + "%）";
+					d->name = std::string(a->GetDisplayFullName() ? a->GetDisplayFullName() : "?") + "の精液（" + RaceName(race) + "・" + std::to_string(tier) + "%）";
 					NameDnaItem(*d);
 				}
 				d->lastDay = RE::Calendar::GetSingleton()->GetDaysPassed();
@@ -886,7 +892,7 @@ namespace
 			},
 			a);
 		if (!ok) {
-			Notify("Beeing Female が見つからないため、DNAを採取できません");
+			Notify("Beeing Female が見つからないため、採取できません");
 		}
 	}
 
@@ -910,12 +916,37 @@ namespace
 
 	std::deque<RE::FormID> g_pendingDna;
 
+	// the "collect" dialogue line in BFHeredity.esp: when the NPC finishes answering, start collecting from him
+	class TopicSink : public RE::BSTEventSink<RE::TESTopicInfoEvent>
+	{
+	public:
+		RE::BSEventNotifyControl ProcessEvent(const RE::TESTopicInfoEvent* a_event, RE::BSTEventSource<RE::TESTopicInfoEvent>*) override
+		{
+			if (!a_event || !a_event->speakerRef || a_event->type.get() != RE::TESTopicInfoEvent::TopicInfoEventType::kTopicEnd) {
+				return RE::BSEventNotifyControl::kContinue;
+			}
+			static RE::FormID s_info = [] {
+				auto f = RE::TESDataHandler::GetSingleton()->LookupForm(PoolData::kCollectInfo, kPlugin);
+				return f ? f->GetFormID() : 0u;
+			}();
+			if (!s_info || a_event->topicInfoFormID != s_info) {
+				return RE::BSEventNotifyControl::kContinue;
+			}
+			const RE::FormID who = a_event->speakerRef->GetFormID();
+			Later(0.5f, [who] {  // let the dialogue menu close first
+				CollectFrom(RE::TESForm::LookupByID<RE::Actor>(who));
+			});
+			return RE::BSEventNotifyControl::kContinue;
+		}
+	};
+	TopicSink g_topic;
+
 	void StartInsert(RE::FormID a_item)
 	{
 		auto pc = RE::PlayerCharacter::GetSingleton();
 		g_dnaBusy = true;
 		// Soulgem Oven's insertion animation, then it is in
-		if (Anim(pc, "dse-sgo-insert01-01")) {
+		if (Anim(pc, "bfh-insert01")) {
 			HoldPlayer(true);
 			Later(g_settings.insertSeconds, [a_item] {
 				if (auto d = DnaByItem(a_item)) {
@@ -1256,6 +1287,7 @@ namespace
 			BuildDna();
 			if (auto holder = RE::ScriptEventSourceHolder::GetSingleton()) {
 				holder->AddEventSink<RE::TESEquipEvent>(&g_equip);
+				holder->AddEventSink<RE::TESTopicInfoEvent>(&g_topic);
 			}
 			if (auto idm = RE::BSInputDeviceManager::GetSingleton()) {
 				idm->AddEventSink(&g_input);
