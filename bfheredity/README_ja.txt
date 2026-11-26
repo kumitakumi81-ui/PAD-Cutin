@@ -1,4 +1,4 @@
-BF Heredity 0.3.0（試作）
+BF Heredity 0.4.0（試作）
 =========================
 Beeing Female NG で生まれたプレイヤーの子供について、次の2つを変えます。
 ・父母の見た目を受け継ぐ：髪色、髪型、目、眉、顔の形、肌の色
@@ -27,8 +27,12 @@ MO2 でこのzipをインストールし、BFHeredity.esp を有効にします�
 ・保管できるのは最大128種類です。
 
 ■ 声（0.3.0〜）
-・採取中は相手の男性NPCに SexLab の声（だんだん強くなる）、挿入時はプレイヤーに SexLab の声が鳴ります。
+・採取中は相手の男性NPCに、挿入中はプレイヤーに SexLab の声が鳴り、終わりに近づくほど強くなります（SGO4 と同じ SexLab の声）。
   声の種類はキャラごとに固定です。BFHeredity.ini の bSounds=0 で無効にできます。
+
+■ カメラ演出（0.4.0〜）
+・採取・挿入のあいだ、全身 → 回り込み → 顔 → 戻る のカメラワーク（黒帯・少しスロー）。
+  PAD Cutin / Kagura Style Armor Break のカメラ処理を流用（GPL-3.0）。BFHeredity.ini の [Camera] で調整・無効化できます。
 
 ■ アニメーション
 ・Soulgem Oven 4（darkconsole 作、BSD 3-Clause、LICENSE_SoulgemOven4.txt）の採取・挿入アニメーションを
