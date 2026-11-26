@@ -909,29 +909,29 @@ namespace
 			return;
 		}
 		const RE::FormID id = a->GetFormID();
-		// Soulgem Oven's extraction animation (dse-sgo-wanking01-01 -> 02 loop -> 03), then the DNA drops
-		if (Anim(a, "bfh-collect01-01")) {
-			HoldNpc(a, true);
-			g_collecting = true;
-			VoiceLoop(id, 0.0f, g_settings.collectSeconds, [] { return g_collecting.load(); });
-			Camera(a, g_settings.collectSeconds);
-			Later(g_settings.collectSeconds, [id] {
-				auto a = RE::TESForm::LookupByID<RE::Actor>(id);
-				g_collecting = false;
-				Voice(a, Heat::kHot);
-				GiveDna(id);
-				Anim(a, "bfh-collect01-03");
-				Later(2.5f, [id] {
-					auto a = RE::TESForm::LookupByID<RE::Actor>(id);
-					Anim(a, "IdleForceDefaultState");
-					HoldNpc(a, false);
-					g_dnaBusy = false;
-				});
-			});
-		} else {
+		// extraction: animation (when registered), voice, camera, then the DNA drops after collectSeconds
+		const bool anim = Anim(a, "bfh-collect01-01");
+		HoldNpc(a, true);
+		g_collecting = true;
+		VoiceLoop(id, 0.0f, g_settings.collectSeconds, [] { return g_collecting.load(); });
+		Camera(a, g_settings.collectSeconds);
+		Later(g_settings.collectSeconds, [id, anim] {
+			auto a = RE::TESForm::LookupByID<RE::Actor>(id);
+			g_collecting = false;
+			Voice(a, Heat::kHot);
 			GiveDna(id);
-			g_dnaBusy = false;
-		}
+			if (anim) {
+				Anim(a, "bfh-collect01-03");
+			}
+			Later(anim ? 2.5f : 0.5f, [id, anim] {
+				auto a = RE::TESForm::LookupByID<RE::Actor>(id);
+				if (anim) {
+					Anim(a, "IdleForceDefaultState");
+				}
+				HoldNpc(a, false);
+				g_dnaBusy = false;
+			});
+		});
 	}
 
 	void GiveDna(RE::FormID id)
@@ -1050,30 +1050,26 @@ namespace
 	{
 		auto pc = RE::PlayerCharacter::GetSingleton();
 		g_dnaBusy = true;
-		// Soulgem Oven's insertion animation, then it is in
-		if (Anim(pc, "bfh-insert01")) {
-			HoldPlayer(true);
-			g_inserting = true;
-			VoiceLoop(pc->GetFormID(), 0.0f, g_settings.insertSeconds, [] { return g_inserting.load(); });
-			Camera(pc, g_settings.insertSeconds + 1.0f);
-			Later(g_settings.insertSeconds, [a_item] {
-				g_inserting = false;
-				Voice(RE::PlayerCharacter::GetSingleton(), Heat::kHot);
-				if (auto d = DnaByItem(a_item)) {
-					InjectDna(*d);
-				}
-				Later(1.0f, [] {
-					Anim(RE::PlayerCharacter::GetSingleton(), "IdleForceDefaultState");
-					HoldPlayer(false);
-					g_dnaBusy = false;
-				});
-			});
-		} else {
+		// insertion: animation (when registered), voice, camera, then it is in after insertSeconds
+		const bool anim = Anim(pc, "bfh-insert01");
+		HoldPlayer(true);
+		g_inserting = true;
+		VoiceLoop(pc->GetFormID(), 0.0f, g_settings.insertSeconds, [] { return g_inserting.load(); });
+		Camera(pc, g_settings.insertSeconds + 1.0f);
+		Later(g_settings.insertSeconds, [a_item, anim] {
+			g_inserting = false;
+			Voice(RE::PlayerCharacter::GetSingleton(), Heat::kHot);
 			if (auto d = DnaByItem(a_item)) {
 				InjectDna(*d);
 			}
-			g_dnaBusy = false;
-		}
+			Later(1.0f, [anim] {
+				if (anim) {
+					Anim(RE::PlayerCharacter::GetSingleton(), "IdleForceDefaultState");
+				}
+				HoldPlayer(false);
+				g_dnaBusy = false;
+			});
+		});
 	}
 
 	class EquipSink : public RE::BSTEventSink<RE::TESEquipEvent>
