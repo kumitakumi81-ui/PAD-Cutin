@@ -901,8 +901,18 @@ namespace
 		auto pc = RE::PlayerCharacter::GetSingleton();
 		auto owner = RE::TESForm::LookupByID<RE::Actor>(d.owner);
 		Log("DNA used: {} (owner {:08X} {})", d.name, d.owner, owner ? "found" : "missing");
-		// Fill Her Up: inflate, with the DNA's owner as the injector
-		RunModEvent("SR_InflateInjectorEvent", { PushForm(pc), PushForm(owner), PushBool(true), PushInt(1), PushFloat(g_settings.fhuAmount), PushInt(2), PushString("") });
+		// Fill Her Up: inflate with the owner as the injector, by Fill Her Up's own amount for his race
+		// (StorageUtil "sr.inflater.race.cum.amount" on the race, 0.75 when not set) x the grade x fFHUAmount
+		auto race = RE::TESForm::LookupByID<RE::TESRace>(d.race);
+		const float grade = d.tier >= 100 ? 1.0f : (d.tier >= 50 ? 0.75f : 0.5f);
+		CallStatic("StorageUtil", "GetFloatValue",
+			[pc, owner, grade](const RE::BSScript::Variable& v) {
+				const float raceAmount = v.IsFloat() ? v.GetFloat() : 0.75f;
+				const float amount = raceAmount * grade * g_settings.fhuAmount;
+				Log("Fill Her Up: race amount {:.2f} x grade {:.2f} x {:.2f} = {:.2f}", raceAmount, grade, g_settings.fhuAmount, amount);
+				RunModEvent("SR_InflateInjectorEvent", { PushForm(pc), PushForm(owner), PushBool(true), PushInt(1), PushFloat(amount), PushInt(2), PushString("") });
+			},
+			race, std::string("sr.inflater.race.cum.amount"), 0.75f);
 		// Beeing Female: pregnant by the owner with the DNA's chance
 		const int roll = static_cast<int>(std::random_device{}() % 100u);
 		if (!owner || roll >= d.tier) {
