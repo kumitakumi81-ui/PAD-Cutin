@@ -51,6 +51,13 @@ namespace
 		bool          eyes = true;
 		bool          faceShape = true;
 		bool          skinTone = true;
+		// DNA
+		bool          dna = true;
+		std::uint32_t collectKey = 0x24;  // J
+		float         virility100 = 0.9f;  // Beeing Female virility (stored sperm, 0.02 - 1.0) at or above this: 100 %
+		float         virility50 = 0.5f;   // at or above this: 50 %, below: 30 %
+		float         fhuAmount = 1.0f;
+		bool          maleOnly = true;
 	};
 	Settings g_settings;
 
@@ -93,6 +100,18 @@ namespace
 				g_settings.faceShape = b();
 			} else if (key == "bskintone") {
 				g_settings.skinTone = b();
+			} else if (key == "bdna") {
+				g_settings.dna = b();
+			} else if (key == "icollectkey") {
+				g_settings.collectKey = static_cast<std::uint32_t>(std::strtoul(val.c_str(), nullptr, 0));
+			} else if (key == "fvirility100") {
+				g_settings.virility100 = static_cast<float>(std::atof(val.c_str()));
+			} else if (key == "fvirility50") {
+				g_settings.virility50 = static_cast<float>(std::atof(val.c_str()));
+			} else if (key == "ffhuamount") {
+				g_settings.fhuAmount = static_cast<float>(std::atof(val.c_str()));
+			} else if (key == "bmaleonly") {
+				g_settings.maleOnly = b();
 			}
 		}
 		Log("settings: inherit={} nameOnBirth={} renameKey=0x{:X} hair={} eyes={} face={} skin={}", g_settings.inherit, g_settings.nameOnBirth,
@@ -605,6 +624,8 @@ namespace
 			a, std::string("FW.Child.Mother"), static_cast<RE::TESForm*>(nullptr));
 	}
 
+	void CollectDna();
+
 	class InputSink : public RE::BSTEventSink<RE::InputEvent*>
 	{
 	public:
@@ -612,19 +633,224 @@ namespace
 		{
 			for (auto e = a_event ? *a_event : nullptr; e; e = e->next) {
 				auto b = e->AsButtonEvent();
-				if (!b || b->GetDevice() != RE::INPUT_DEVICE::kKeyboard || !b->IsDown() || b->GetIDCode() != g_settings.renameKey) {
+				if (!b || b->GetDevice() != RE::INPUT_DEVICE::kKeyboard || !b->IsDown()) {
+					continue;
+				}
+				const auto code = b->GetIDCode();
+				if (code != g_settings.renameKey && code != g_settings.collectKey) {
 					continue;
 				}
 				auto ui = RE::UI::GetSingleton();
 				if (ui && (ui->GameIsPaused() || ui->IsMenuOpen(RE::Console::MENU_NAME))) {
 					continue;
 				}
-				SKSE::GetTaskInterface()->AddTask(TryRenameTarget);
+				if (code == g_settings.renameKey) {
+					SKSE::GetTaskInterface()->AddTask(TryRenameTarget);
+				} else {
+					SKSE::GetTaskInterface()->AddTask(CollectDna);
+				}
 			}
 			return RE::BSEventNotifyControl::kContinue;
 		}
 	};
 	InputSink g_input;
+
+
+	// ------------------------------------------------------------------ DNA
+	// "J" while aiming at an NPC: collect their DNA. Every NPC gets one of the 128 DNA items in BFHeredity.esp, renamed to
+	// "<name>のDNA（<race>・<n>%）". Using (drinking) it puts it inside: Fill Her Up inflates with that NPC as the injector, and
+	// Beeing Female makes the player pregnant by that NPC with the item's chance (30 / 50 / 100 %, fixed per NPC).
+	struct Dna
+	{
+		RE::FormID    item = 0;
+		RE::FormID    owner = 0;
+		RE::FormID    race = 0;
+		std::uint8_t  tier = 0;  // 30 / 50 / 100, 0 = free
+		float         lastDay = -100.0f;
+		std::string   name;
+	};
+	std::vector<Dna> g_dna;
+
+	void BuildDna()
+	{
+		g_dna.clear();
+		auto dh = RE::TESDataHandler::GetSingleton();
+		for (auto id : PoolData::kDna) {
+			if (auto f = dh ? dh->LookupForm<RE::AlchemyItem>(id, kPlugin) : nullptr) {
+				Dna d;
+				d.item = f->GetFormID();
+				g_dna.push_back(d);
+			}
+		}
+		Log("DNA: {} item slots", g_dna.size());
+	}
+
+	void NameDnaItem(const Dna& d)
+	{
+		if (auto f = RE::TESForm::LookupByID<RE::AlchemyItem>(d.item); f && !d.name.empty()) {
+			f->SetFullName(d.name.c_str());
+		}
+	}
+
+	Dna* DnaByItem(RE::FormID a_item)
+	{
+		for (auto& d : g_dna) {
+			if (d.item == a_item && d.tier) {
+				return &d;
+			}
+		}
+		return nullptr;
+	}
+
+	// ModEvent.Create / Push* / Send, one after another
+	using Step = std::function<void(std::int32_t, std::function<void()>)>;
+	void RunModEvent(const std::string& a_name, std::vector<Step> a_steps)
+	{
+		CallStatic("ModEvent", "Create",
+			[a_steps](const RE::BSScript::Variable& v) {
+				const std::int32_t h = v.IsInt() ? v.GetSInt() : 0;
+				if (!h) {
+					Log("ModEvent.Create failed");
+					return;
+				}
+				auto steps = std::make_shared<std::vector<Step>>(a_steps);
+				auto idx = std::make_shared<std::size_t>(0);
+				auto next = std::make_shared<std::function<void()>>();
+				*next = [steps, idx, next, h] {
+					if (*idx < steps->size()) {
+						auto& st = (*steps)[(*idx)++];
+						st(h, *next);
+					} else {
+						CallStatic("ModEvent", "Send", nullptr, h);
+					}
+				};
+				(*next)();
+			},
+			std::string(a_name));
+	}
+
+	Step PushForm(RE::TESForm* f) { return [f](std::int32_t h, std::function<void()> n) { CallStatic("ModEvent", "PushForm", [n](const RE::BSScript::Variable&) { n(); }, h, f); }; }
+	Step PushBool(bool b) { return [b](std::int32_t h, std::function<void()> n) { CallStatic("ModEvent", "PushBool", [n](const RE::BSScript::Variable&) { n(); }, h, b); }; }
+	Step PushInt(std::int32_t i) { return [i](std::int32_t h, std::function<void()> n) { CallStatic("ModEvent", "PushInt", [n](const RE::BSScript::Variable&) { n(); }, h, i); }; }
+	Step PushFloat(float x) { return [x](std::int32_t h, std::function<void()> n) { CallStatic("ModEvent", "PushFloat", [n](const RE::BSScript::Variable&) { n(); }, h, x); }; }
+	Step PushString(std::string s) { return [s](std::int32_t h, std::function<void()> n) { CallStatic("ModEvent", "PushString", [n](const RE::BSScript::Variable&) { n(); }, h, std::string(s)); }; }
+
+	std::string RaceName(RE::TESRace* r)
+	{
+		const char* n = r ? r->GetFullName() : nullptr;
+		return n && *n ? n : "?";
+	}
+
+	void CollectDna()
+	{
+		if (!g_settings.dna) {
+			return;
+		}
+		auto pick = RE::CrosshairPickData::GetSingleton();
+		auto ref = pick ? pick->GetActiveTarget().get() : nullptr;
+		auto a = ref ? ref->As<RE::Actor>() : nullptr;
+		auto pc = RE::PlayerCharacter::GetSingleton();
+		if (!a || a == pc || a->IsChild()) {
+			return;
+		}
+		auto base = a->GetActorBase();
+		auto race = a->GetRace();
+		if (!base || !race || !race->HasKeywordString("ActorTypeNPC")) {
+			Notify("この相手からはDNAを採取できません");
+			return;
+		}
+		if (g_settings.maleOnly && base->GetSex() != RE::SEX::kMale) {
+			Notify("DNAは男性からのみ採取できます");
+			return;
+		}
+		// how much the NPC has stored = Beeing Female's virility (recovers with time since his last sex)
+		auto ctrl = RE::TESDataHandler::GetSingleton()->LookupForm<RE::TESQuest>(0x182A, "BeeingFemale.esm");
+		const RE::FormID id = a->GetFormID();
+		const bool ok = CallMethod(ctrl, "FWController", "GetVirility",
+			[id](const RE::BSScript::Variable& v) {
+				auto a = RE::TESForm::LookupByID<RE::Actor>(id);
+				if (!a) {
+					return;
+				}
+				const float vir = v.IsFloat() ? v.GetFloat() : 1.0f;
+				const std::uint8_t tier = vir >= g_settings.virility100 ? 100 : (vir >= g_settings.virility50 ? 50 : 30);
+				// one item per NPC and grade
+				Dna* d = nullptr;
+				for (auto& x : g_dna) {
+					if (x.tier == tier && x.owner == id) {
+						d = &x;
+						break;
+					}
+				}
+				if (!d) {
+					for (auto& x : g_dna) {
+						if (!x.tier) {
+							d = &x;
+							break;
+						}
+					}
+					if (!d) {
+						Notify("DNAの保管枠がいっぱいです");
+						return;
+					}
+					auto race = a->GetRace();
+					d->tier = tier;
+					d->owner = id;
+					d->race = race ? race->GetFormID() : 0;
+					d->name = std::string(a->GetDisplayFullName() ? a->GetDisplayFullName() : "?") + "のDNA（" + RaceName(race) + "・" + std::to_string(tier) + "%）";
+					NameDnaItem(*d);
+				}
+				d->lastDay = RE::Calendar::GetSingleton()->GetDaysPassed();
+				if (auto item = RE::TESForm::LookupByID<RE::AlchemyItem>(d->item)) {
+					RE::PlayerCharacter::GetSingleton()->AddObjectToContainer(item, nullptr, 1, nullptr);
+				}
+				// he has given it: Beeing Female's virility starts recovering from now
+				CallStatic("StorageUtil", "SetFloatValue", nullptr, a, std::string("FW.LastSexTime"), d->lastDay);
+				Log("DNA collected: {:08X} virility {:.2f} -> {}  {}", id, vir, tier, d->name);
+				Notify(d->name + "を採取しました");
+			},
+			a);
+		if (!ok) {
+			Notify("Beeing Female が見つからないため、DNAを採取できません");
+		}
+	}
+
+	void InjectDna(Dna& d)
+	{
+		auto pc = RE::PlayerCharacter::GetSingleton();
+		auto owner = RE::TESForm::LookupByID<RE::Actor>(d.owner);
+		Log("DNA used: {} (owner {:08X} {})", d.name, d.owner, owner ? "found" : "missing");
+		// Fill Her Up: inflate, with the DNA's owner as the injector
+		RunModEvent("SR_InflateInjectorEvent", { PushForm(pc), PushForm(owner), PushBool(true), PushInt(1), PushFloat(g_settings.fhuAmount), PushInt(2), PushString("") });
+		// Beeing Female: pregnant by the owner with the DNA's chance
+		const int roll = static_cast<int>(std::random_device{}() % 100u);
+		if (!owner || roll >= d.tier) {
+			Log("DNA: no conception (roll {} / {}%)", roll, d.tier);
+			return;
+		}
+		auto ctrl = RE::TESDataHandler::GetSingleton()->LookupForm<RE::TESQuest>(0x182A, "BeeingFemale.esm");
+		const bool ok = CallMethod(ctrl, "FWController", "Impregnate", nullptr, static_cast<RE::Actor*>(pc), owner, static_cast<std::int32_t>(1));
+		Log("DNA: conception by {:08X} (roll {} / {}%) -> {}", d.owner, roll, d.tier, ok ? "sent to Beeing Female" : "Beeing Female controller not found");
+	}
+
+	class EquipSink : public RE::BSTEventSink<RE::TESEquipEvent>
+	{
+	public:
+		RE::BSEventNotifyControl ProcessEvent(const RE::TESEquipEvent* a_event, RE::BSTEventSource<RE::TESEquipEvent>*) override
+		{
+			if (!a_event || !a_event->equipped || !a_event->actor || !a_event->actor->IsPlayerRef()) {
+				return RE::BSEventNotifyControl::kContinue;
+			}
+			const RE::FormID item = a_event->baseObject;
+			SKSE::GetTaskInterface()->AddTask([item] {
+				if (auto d = DnaByItem(item)) {
+					InjectDna(*d);
+				}
+			});
+			return RE::BSEventNotifyControl::kContinue;
+		}
+	};
+	EquipSink g_equip;
 
 	// ------------------------------------------------------------------ births
 	void ReadParents(int a_idx)
@@ -733,6 +959,7 @@ namespace
 	// ------------------------------------------------------------------ co-save
 	constexpr std::uint32_t kSerUid = 'BFHR';
 	constexpr std::uint32_t kSerSlots = 'SLOT';
+	constexpr std::uint32_t kSerDna = 'DNAS';
 
 	void OnSave(SKSE::SerializationInterface* a_ser)
 	{
@@ -759,6 +986,27 @@ namespace
 			a_ser->WriteRecordData(named);
 			a_ser->WriteRecordData(s.looks);
 		}
+		if (!a_ser->OpenRecord(kSerDna, 1)) {
+			return;
+		}
+		std::uint32_t nd = 0;
+		for (auto& d : g_dna) {
+			nd += d.tier ? 1u : 0u;
+		}
+		a_ser->WriteRecordData(nd);
+		for (auto& d : g_dna) {
+			if (!d.tier) {
+				continue;
+			}
+			a_ser->WriteRecordData(d.item);
+			a_ser->WriteRecordData(d.owner);
+			a_ser->WriteRecordData(d.race);
+			a_ser->WriteRecordData(d.tier);
+			a_ser->WriteRecordData(d.lastDay);
+			const std::uint32_t len = static_cast<std::uint32_t>(d.name.size());
+			a_ser->WriteRecordData(len);
+			a_ser->WriteRecordData(d.name.data(), len);
+		}
 	}
 
 	void ResetAll()
@@ -777,6 +1025,16 @@ namespace
 		}
 		g_namingQueue.clear();
 		g_prompting = false;
+		for (auto& d : g_dna) {
+			if (d.tier) {
+				if (auto f = RE::TESForm::LookupByID<RE::AlchemyItem>(d.item)) {
+					f->SetFullName("DNA");
+				}
+			}
+			const auto item = d.item;
+			d = Dna{};
+			d.item = item;
+		}
 	}
 
 	void OnRevert(SKSE::SerializationInterface*)
@@ -790,6 +1048,40 @@ namespace
 		std::uint32_t type, version, length;
 		int           restored = 0;
 		while (a_ser->GetNextRecordInfo(type, version, length)) {
+			if (type == kSerDna) {
+				std::uint32_t n = 0;
+				a_ser->ReadRecordData(n);
+				for (std::uint32_t i = 0; i < n; ++i) {
+					Dna           x;
+					std::uint32_t len = 0;
+					a_ser->ReadRecordData(x.item);
+					a_ser->ReadRecordData(x.owner);
+					a_ser->ReadRecordData(x.race);
+					a_ser->ReadRecordData(x.tier);
+					a_ser->ReadRecordData(x.lastDay);
+					a_ser->ReadRecordData(len);
+					x.name.resize(len);
+					if (len) {
+						a_ser->ReadRecordData(x.name.data(), len);
+					}
+					RE::FormID it = 0, ow = 0, rc = 0;
+					if (!a_ser->ResolveFormID(x.item, it)) {
+						continue;
+					}
+					a_ser->ResolveFormID(x.owner, ow);
+					a_ser->ResolveFormID(x.race, rc);
+					for (auto& d : g_dna) {
+						if (d.item == it) {
+							d = x;
+							d.item = it;
+							d.owner = ow;
+							d.race = rc;
+							NameDnaItem(d);
+						}
+					}
+				}
+				continue;
+			}
 			if (type != kSerSlots) {
 				continue;
 			}
@@ -851,6 +1143,10 @@ namespace
 		case SKSE::MessagingInterface::kDataLoaded:
 			LoadSettings();
 			BuildSlots();
+			BuildDna();
+			if (auto holder = RE::ScriptEventSourceHolder::GetSingleton()) {
+				holder->AddEventSink<RE::TESEquipEvent>(&g_equip);
+			}
 			if (auto idm = RE::BSInputDeviceManager::GetSingleton()) {
 				idm->AddEventSink(&g_input);
 			}
