@@ -295,6 +295,8 @@ namespace Cutin
 		RE::NiPointer<RE::NiAVObject> headNode;
 		RE::NiMatrix3      headBase{}, headWritten{};
 		bool               headValid = false;
+		bool               orbit = false;  // BF Heredity insertion shot: behind -> round to the front (whole body) -> face
+		float              orbitSign = 1.0f;
 	};
 
 	inline State                    g;
@@ -308,6 +310,7 @@ namespace Cutin
 	{
 		RE::ActorHandle    actor;
 		std::uint32_t      mask = 0;
+		bool               orbit = false;
 		SClock::time_point since;
 	};
 	inline std::optional<Pending> g_pending;
@@ -540,7 +543,7 @@ namespace Cutin
 		}
 	}
 
-	inline void Start(RE::Actor* a, std::uint32_t a_mask)
+	inline void Start(RE::Actor* a, std::uint32_t a_mask, bool a_orbit = false)
 	{
 		auto player = RE::PlayerCharacter::GetSingleton();
 		auto cam = RE::PlayerCamera::GetSingleton();
@@ -610,6 +613,11 @@ namespace Cutin
 			g.roll = 1.0f;
 		}
 		g.roll *= std::clamp(g_settings.cutinDutch, 0.0f, 30.0f) * 0.0174533f;
+		g.orbit = a_orbit;
+		g.orbitSign = g.side < 0.0f ? -1.0f : 1.0f;
+		if (a_orbit) {
+			g.faceSide = 0.0f, g.faceRise = 1.0f, g.faceDistMul = 1.0f, g.faceAimDrop = 12.0f;  // ends straight on the face
+		}
 		g.headNode.reset(Node(a, "NPC Head [Head]"));
 		g_faceStartNs = 0;
 		g_faceFxTarget = 0.0f;
@@ -645,12 +653,12 @@ namespace Cutin
 	}
 
 	// any thread: a break asks for a cut-in; it starts on the next ticker update (main thread)
-	inline void Request(RE::Actor* a, std::uint32_t a_mask)
+	inline void Request(RE::Actor* a, std::uint32_t a_mask, bool a_orbit = false)
 	{
 		if (!a || g.active || g_pending) {
 			return;
 		}
-		g_pending = Pending{ a->GetHandle(), a_mask, SClock::now() };
+		g_pending = Pending{ a->GetHandle(), a_mask, a_orbit, SClock::now() };
 	}
 
 	// main thread, every ticker update
@@ -662,9 +670,10 @@ namespace Cutin
 		}
 		auto a = g_pending->actor.get();
 		const auto mask = g_pending->mask;
+		const bool orbit = g_pending->orbit;
 		g_pending.reset();
 		if (a) {
-			Start(a.get(), mask);
+			Start(a.get(), mask, orbit);
 		}
 	}
 
@@ -708,7 +717,11 @@ namespace Cutin
 			return;
 		}
 		Hold(a.get());
-		const Times tm = T();
+		Times tm = T();
+		if (g.orbit) {  // in / round to the front / to the face / face hold / out, over the same total length
+			const float D = tm.out;
+			tm = Times{ 0.10f * D, 0.58f * D, 0.72f * D, 0.92f * D, D };
+		}
 		const float t = Sec(g.start);  // negative during the hit-stop
 		// camera shake from the break: strong at the hit, gone in about half a second (real time)
 		RE::NiPoint3 shake{};
@@ -771,7 +784,31 @@ namespace Cutin
 
 		RE::NiPoint3     pos;
 		RE::NiQuaternion rot;
-		if (t < tm.in) {
+		// orbit shot: the whole body framed from behind, the camera slowly circling round to the front at the same distance
+		RE::NiPoint3     bodyAt = a->GetPosition() + RE::NiPoint3{ 0, 0, 72.0f * a->GetScale() };
+		const float      bodyDist = std::max(g_settings.cutinPartDistance, 60.0f) * 2.3f;
+		auto             ring = [&](float a_turn, RE::NiPoint3& o_pos, RE::NiQuaternion& o_rot) {
+            const float th = a->data.angle.z + 3.14159265f * (1.0f - a_turn) * g.orbitSign;  // a_turn 0 = behind, 1 = in front
+            o_pos = bodyAt + RE::NiPoint3{ std::sin(th), std::cos(th), 0 } * bodyDist + RE::NiPoint3{ 0, 0, 14.0f };
+            o_rot = RE::NiQuaternion(Frame(bodyAt - o_pos, RE::NiPoint3{ 0, 0, 1 }));
+		};
+		if (g.orbit && t < tm.toFace) {
+			RE::NiPoint3     rPos;
+			RE::NiQuaternion rRot;
+			if (t < tm.in) {
+				ring(0.0f, rPos, rRot);
+				const float k = Ease(t / tm.in);
+				pos = g.fromPos + (rPos - g.fromPos) * k;
+				rot = Slerp(g.fromRot, rRot, k);
+			} else if (t < tm.partHold) {
+				ring(Ease((t - tm.in) / (tm.partHold - tm.in)), pos, rot);
+			} else {
+				ring(1.0f, rPos, rRot);
+				const float k = Ease((t - tm.partHold) / (tm.toFace - tm.partHold));
+				pos = Orbit(faceAt, rPos, fPos, k);
+				rot = Slerp(rRot, fRot, k);
+			}
+		} else if (t < tm.in) {
 			const float k = Ease(t / tm.in);
 			pos = Orbit(partAt, g.fromPos, pPos, k);
 			rot = Slerp(g.fromRot, pRot, k);

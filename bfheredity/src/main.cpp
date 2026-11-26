@@ -66,6 +66,7 @@ namespace
 		float         voiceInterval = 2.5f;
 		// camera (PAD Cutin / KSAB camera work): whole body -> circle -> face -> back
 		bool  camera = true;
+		float insertCameraSeconds = 7.0f;  // insertion shot: behind -> front -> whole body -> face
 		// fields read by Cutin.h
 		bool  cutinPlayer = true;
 		float cutinSlowMo = 0.6f;
@@ -96,9 +97,9 @@ namespace
 		return s;
 	}
 
-	void LoadSettings()
+	void LoadSettingsFile(const char* a_path)
 	{
-		std::ifstream f("Data/SKSE/Plugins/BFHeredity.ini");
+		std::ifstream f(a_path);
 		std::string   line;
 		while (std::getline(f, line)) {
 			if (auto sc = line.find(';'); sc != std::string::npos) {
@@ -113,7 +114,7 @@ namespace
 			for (auto& c : key) {
 				c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
 			}
-			auto b = [&] { return val == "1" || val == "true"; };
+			auto b = [&] { return val == "1" || val == "true" || val == "True" || val == "TRUE"; };
 			if (key == "binherit") {
 				g_settings.inherit = b();
 			} else if (key == "bnameonbirth") {
@@ -143,6 +144,8 @@ namespace
 			} else if (key == "bcamera") {
 				g_settings.camera = b();
 				g_settings.cutinPlayer = g_settings.camera;
+			} else if (key == "finsertcameraseconds") {
+				g_settings.insertCameraSeconds = static_cast<float>(std::atof(val.c_str()));
 			} else if (key == "fcameraslowmo") {
 				g_settings.cutinSlowMo = static_cast<float>(std::atof(val.c_str()));
 			} else if (key == "fcamerabodydistance") {
@@ -165,6 +168,18 @@ namespace
 				g_settings.insertSeconds = static_cast<float>(std::atof(val.c_str()));
 			}
 		}
+	}
+
+	// the plugin ini, then MCM Helper's defaults and the player's MCM choices on top
+	void LoadSettings(bool a_log = true)
+	{
+		LoadSettingsFile("Data/SKSE/Plugins/BFHeredity.ini");
+		LoadSettingsFile("Data/MCM/Config/BFHeredity/settings.ini");
+		LoadSettingsFile("Data/MCM/Settings/BFHeredity.ini");
+		g_settings.cutinPlayer = g_settings.camera;
+		if (!a_log) {
+			return;
+		}
 		Log("settings: inherit={} nameOnBirth={} renameKey=0x{:X} hair={} eyes={} face={} skin={}", g_settings.inherit, g_settings.nameOnBirth,
 			g_settings.renameKey, g_settings.hairStyle, g_settings.eyes, g_settings.faceShape, g_settings.skinTone);
 	}
@@ -172,13 +187,13 @@ namespace
 #include "Cutin.h"
 
 	// whole body (body slot) -> face, the cut lasting about a_seconds
-	void Camera(RE::Actor* a, float a_seconds)
+	void Camera(RE::Actor* a, float a_seconds, bool a_orbit = false)
 	{
 		if (!a || !g_settings.camera) {
 			return;
 		}
 		g_settings.cutinLength = std::clamp(a_seconds / 3.25f, 0.3f, 4.0f);
-		Cutin::Request(a, 1u << (32 - 30));
+		Cutin::Request(a, 1u << (32 - 30), a_orbit);
 	}
 
 	// ------------------------------------------------------------------ Papyrus calls
@@ -908,6 +923,7 @@ namespace
 		if (g_dnaBusy.exchange(true)) {
 			return;
 		}
+		LoadSettings(false);  // MCM changes take effect at once
 		const RE::FormID id = a->GetFormID();
 		// extraction: animation (when registered), voice, camera, then the DNA drops after collectSeconds
 		const bool anim = Anim(a, "dse-sgo-wanking01-01");
@@ -1050,19 +1066,22 @@ namespace
 	{
 		auto pc = RE::PlayerCharacter::GetSingleton();
 		g_dnaBusy = true;
+		LoadSettings(false);  // MCM changes take effect at once
 		// insertion: animation (when registered), voice, camera, then it is in after insertSeconds
 		const bool anim = Anim(pc, "dse-sgo-insert01-01");
 		HoldPlayer(true);
 		g_inserting = true;
 		VoiceLoop(pc->GetFormID(), 0.0f, g_settings.insertSeconds, [] { return g_inserting.load(); });
-		Camera(pc, g_settings.insertSeconds + 1.0f);
-		Later(g_settings.insertSeconds, [a_item, anim] {
+		// behind -> slowly round to the front (whole body) -> face; the player is held until the shot is over
+		const float camLen = g_settings.camera ? std::max(g_settings.insertSeconds + 1.0f, g_settings.insertCameraSeconds) : g_settings.insertSeconds + 1.0f;
+		Camera(pc, camLen, true);
+		Later(g_settings.insertSeconds, [a_item, anim, camLen] {
 			g_inserting = false;
 			Voice(RE::PlayerCharacter::GetSingleton(), Heat::kHot);
 			if (auto d = DnaByItem(a_item)) {
 				InjectDna(*d);
 			}
-			Later(1.0f, [anim] {
+			Later(std::max(1.0f, camLen - g_settings.insertSeconds), [anim] {
 				if (anim) {
 					Anim(RE::PlayerCharacter::GetSingleton(), "IdleForceDefaultState");
 				}
