@@ -58,6 +58,9 @@ namespace
 		float         virility50 = 0.5f;   // at or above this: 50 %, below: 30 %
 		float         fhuAmount = 1.0f;
 		bool          maleOnly = true;
+		bool          animations = true;      // Soulgem Oven's extraction / insertion animations
+		float         collectSeconds = 8.0f;  // length of the extraction animation before the DNA drops
+		float         insertSeconds = 4.0f;   // length of the insertion animation before it is in
 	};
 	Settings g_settings;
 
@@ -112,6 +115,12 @@ namespace
 				g_settings.fhuAmount = static_cast<float>(std::atof(val.c_str()));
 			} else if (key == "bmaleonly") {
 				g_settings.maleOnly = b();
+			} else if (key == "banimations") {
+				g_settings.animations = b();
+			} else if (key == "fcollectseconds") {
+				g_settings.collectSeconds = static_cast<float>(std::atof(val.c_str()));
+			} else if (key == "finsertseconds") {
+				g_settings.insertSeconds = static_cast<float>(std::atof(val.c_str()));
 			}
 		}
 		Log("settings: inherit={} nameOnBirth={} renameKey=0x{:X} hair={} eyes={} face={} skin={}", g_settings.inherit, g_settings.nameOnBirth,
@@ -741,6 +750,43 @@ namespace
 		return n && *n ? n : "?";
 	}
 
+	// run a_fn on the main thread after a_seconds
+	void Later(float a_seconds, std::function<void()> a_fn)
+	{
+		std::thread([a_seconds, a_fn] {
+			std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(a_seconds * 1000.0f)));
+			SKSE::GetTaskInterface()->AddTask(a_fn);
+		}).detach();
+	}
+
+	bool Anim(RE::Actor* a_actor, const char* a_event)
+	{
+		if (!a_actor || !g_settings.animations) {
+			return false;
+		}
+		const bool ok = a_actor->NotifyAnimationGraph(a_event);
+		Log("anim {} on {:08X}: {}", a_event, a_actor->GetFormID(), ok ? "ok" : "not available");
+		return ok;
+	}
+
+	void HoldNpc(RE::Actor* a, bool a_hold)
+	{
+		CallMethod(a, "Actor", "SetDontMove", nullptr, a_hold);
+		CallMethod(a, "Actor", "SetRestrained", nullptr, a_hold);
+	}
+
+	void HoldPlayer(bool a_hold)
+	{
+		if (a_hold) {
+			CallStatic("Game", "DisablePlayerControls", nullptr, true, true, false, false, false, true, true, false, static_cast<std::int32_t>(0));
+		} else {
+			CallStatic("Game", "EnablePlayerControls", nullptr, true, true, true, true, true, true, true, true, static_cast<std::int32_t>(0));
+		}
+	}
+
+	std::atomic_bool g_dnaBusy = false;
+	void             GiveDna(RE::FormID a_id);
+
 	void CollectDna()
 	{
 		if (!g_settings.dna) {
@@ -763,9 +809,38 @@ namespace
 			Notify("DNAは男性からのみ採取できます");
 			return;
 		}
+		if (g_dnaBusy.exchange(true)) {
+			return;
+		}
+		const RE::FormID id = a->GetFormID();
+		// Soulgem Oven's extraction animation (dse-sgo-wanking01-01 -> 02 loop -> 03), then the DNA drops
+		if (Anim(a, "dse-sgo-wanking01-01")) {
+			HoldNpc(a, true);
+			Later(g_settings.collectSeconds, [id] {
+				auto a = RE::TESForm::LookupByID<RE::Actor>(id);
+				GiveDna(id);
+				Anim(a, "dse-sgo-wanking01-03");
+				Later(2.5f, [id] {
+					auto a = RE::TESForm::LookupByID<RE::Actor>(id);
+					Anim(a, "IdleForceDefaultState");
+					HoldNpc(a, false);
+					g_dnaBusy = false;
+				});
+			});
+		} else {
+			GiveDna(id);
+			g_dnaBusy = false;
+		}
+	}
+
+	void GiveDna(RE::FormID id)
+	{
+		auto a = RE::TESForm::LookupByID<RE::Actor>(id);
+		if (!a) {
+			return;
+		}
 		// how much the NPC has stored = Beeing Female's virility (recovers with time since his last sex)
 		auto ctrl = RE::TESDataHandler::GetSingleton()->LookupForm<RE::TESQuest>(0x182A, "BeeingFemale.esm");
-		const RE::FormID id = a->GetFormID();
 		const bool ok = CallMethod(ctrl, "FWController", "GetVirility",
 			[id](const RE::BSScript::Variable& v) {
 				auto a = RE::TESForm::LookupByID<RE::Actor>(id);
@@ -833,6 +908,33 @@ namespace
 		Log("DNA: conception by {:08X} (roll {} / {}%) -> {}", d.owner, roll, d.tier, ok ? "sent to Beeing Female" : "Beeing Female controller not found");
 	}
 
+	std::deque<RE::FormID> g_pendingDna;
+
+	void StartInsert(RE::FormID a_item)
+	{
+		auto pc = RE::PlayerCharacter::GetSingleton();
+		g_dnaBusy = true;
+		// Soulgem Oven's insertion animation, then it is in
+		if (Anim(pc, "dse-sgo-insert01-01")) {
+			HoldPlayer(true);
+			Later(g_settings.insertSeconds, [a_item] {
+				if (auto d = DnaByItem(a_item)) {
+					InjectDna(*d);
+				}
+				Later(1.0f, [] {
+					Anim(RE::PlayerCharacter::GetSingleton(), "IdleForceDefaultState");
+					HoldPlayer(false);
+					g_dnaBusy = false;
+				});
+			});
+		} else {
+			if (auto d = DnaByItem(a_item)) {
+				InjectDna(*d);
+			}
+			g_dnaBusy = false;
+		}
+	}
+
 	class EquipSink : public RE::BSTEventSink<RE::TESEquipEvent>
 	{
 	public:
@@ -843,8 +945,8 @@ namespace
 			}
 			const RE::FormID item = a_event->baseObject;
 			SKSE::GetTaskInterface()->AddTask([item] {
-				if (auto d = DnaByItem(item)) {
-					InjectDna(*d);
+				if (DnaByItem(item)) {
+					g_pendingDna.push_back(item);  // played once the inventory is closed
 				}
 			});
 			return RE::BSEventNotifyControl::kContinue;
@@ -930,6 +1032,14 @@ namespace
 		for (int i = 0; i < static_cast<int>(g_slots.size()); ++i) {
 			if (g_slots[i].state == State::kBorn) {
 				ReadParents(i);
+			}
+		}
+		if (!g_pendingDna.empty() && !g_dnaBusy) {
+			auto ui = RE::UI::GetSingleton();
+			if (ui && !ui->GameIsPaused() && !ui->IsMenuOpen(RE::InventoryMenu::MENU_NAME) && !ui->IsMenuOpen(RE::FavoritesMenu::MENU_NAME)) {
+				auto item = g_pendingDna.front();
+				g_pendingDna.pop_front();
+				StartInsert(item);
 			}
 		}
 		if (g_prompting && tick - g_promptTick > 300) {
