@@ -67,6 +67,7 @@ namespace
 		// camera (PAD Cutin / KSAB camera work): whole body -> circle -> face -> back
 		bool  camera = true;
 		float insertCameraSeconds = 7.0f;  // insertion shot: behind -> front -> whole body -> face
+		bool  dropBottle = true;           // the collected bottle drops at the giver's feet (otherwise straight into the inventory)
 		// fields read by Cutin.h
 		bool  cutinPlayer = true;
 		float cutinSlowMo = 0.6f;
@@ -144,6 +145,8 @@ namespace
 			} else if (key == "bcamera") {
 				g_settings.camera = b();
 				g_settings.cutinPlayer = g_settings.camera;
+			} else if (key == "bdropbottle") {
+				g_settings.dropBottle = b();
 			} else if (key == "finsertcameraseconds") {
 				g_settings.insertCameraSeconds = static_cast<float>(std::atof(val.c_str()));
 			} else if (key == "fcameraslowmo") {
@@ -993,13 +996,25 @@ namespace
 					NameDnaItem(*d);
 				}
 				d->lastDay = RE::Calendar::GetSingleton()->GetDaysPassed();
+				bool dropped = false;
 				if (auto item = RE::TESForm::LookupByID<RE::AlchemyItem>(d->item)) {
-					RE::PlayerCharacter::GetSingleton()->AddObjectToContainer(item, nullptr, 1, nullptr);
+					// the bottle drops at his feet, a little in front of him; the player picks it up
+					if (g_settings.dropBottle) {
+						if (auto ref = a->PlaceObjectAtMe(item, false)) {
+							const float  h = a->GetAngleZ();
+							RE::NiPoint3 at = a->GetPosition() + RE::NiPoint3{ std::sin(h) * 40.0f, std::cos(h) * 40.0f, 12.0f };
+							ref->SetPosition(at);
+							dropped = true;
+						}
+					}
+					if (!dropped) {
+						RE::PlayerCharacter::GetSingleton()->AddObjectToContainer(item, nullptr, 1, nullptr);
+					}
 				}
 				// he has given it: Beeing Female's virility starts recovering from now
 				CallStatic("StorageUtil", "SetFloatValue", nullptr, a, std::string("FW.LastSexTime"), d->lastDay);
 				Log("DNA collected: {:08X} virility {:.2f} -> {}  {}", id, vir, tier, d->name);
-				Notify(d->name + "を採取しました");
+				Notify(dropped ? d->name + "の瓶が足元に落ちた" : d->name + "を採取しました");
 			},
 			a);
 		if (!ok) {
