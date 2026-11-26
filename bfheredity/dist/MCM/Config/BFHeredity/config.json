@@ -1,0 +1,34 @@
+{
+  "modName": "BFHeredity",
+  "displayName": "BF Heredity",
+  "minMcmVersion": 1,
+  "pages": [
+    {
+      "pageDisplayName": "演出",
+      "content": [
+        { "type": "header", "text": "採取・挿入の演出" },
+        {
+          "id": "bCamera:Camera",
+          "text": "カメラワーク",
+          "type": "toggle",
+          "help": "採取・挿入のときのカメラ演出（黒帯・スロー付き）のあり／なし",
+          "valueOptions": { "sourceType": "ModSettingBool" }
+        },
+        {
+          "id": "bSounds:DNA",
+          "text": "声",
+          "type": "toggle",
+          "help": "採取・挿入のときの声のあり／なし",
+          "valueOptions": { "sourceType": "ModSettingBool" }
+        },
+        {
+          "id": "bAnimations:DNA",
+          "text": "アニメーション",
+          "type": "toggle",
+          "help": "採取・挿入のときのアニメーションのあり／なし",
+          "valueOptions": { "sourceType": "ModSettingBool" }
+        }
+      ]
+    }
+  ]
+}
