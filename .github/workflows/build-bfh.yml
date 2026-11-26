@@ -45,7 +45,7 @@ jobs:
           cp bfheredity/dist/BFHeredity.esp out/
           cp -r bfheredity/dist/SEQ bfheredity/dist/meshes out/
           cp bfheredity/dist/LICENSE_SoulgemOven4.txt out/
-          cp bfheredity/README_ja.txt LICENSE.txt out/
+          cp bfheredity/README_ja.txt LICENSE.txt THIRD_PARTY_NOTICES.txt out/
       - uses: actions/upload-artifact@v4
         with:
           name: BF-Heredity
