@@ -129,7 +129,7 @@ namespace
 			return false;
 		}
 		RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> cb(new Functor(std::move(a_cb)));
-		auto args = RE::MakeFunctionArguments(std::forward<Args>(a_args)...);
+		auto args = RE::MakeFunctionArguments(static_cast<std::decay_t<Args>>(a_args)...);
 		return vm->DispatchStaticCall(a_class, a_fn, args, cb);
 	}
 
@@ -146,7 +146,7 @@ namespace
 			return false;
 		}
 		RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> cb(new Functor(std::move(a_cb)));
-		auto args = RE::MakeFunctionArguments(std::forward<Args>(a_args)...);
+		auto args = RE::MakeFunctionArguments(static_cast<std::decay_t<Args>>(a_args)...);
 		return vm->DispatchMethodCall(handle, a_class, a_fn, args, cb);
 	}
 
