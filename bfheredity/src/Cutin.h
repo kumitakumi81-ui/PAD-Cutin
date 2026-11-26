@@ -720,7 +720,7 @@ namespace Cutin
 		Times tm = T();
 		if (g.orbit) {  // in / round to the front / to the face / face hold / out, over the same total length
 			const float D = tm.out;
-			tm = Times{ 0.10f * D, 0.58f * D, 0.72f * D, 0.92f * D, D };
+			tm = Times{ 0.10f * D, 0.62f * D, 0.74f * D, 0.92f * D, D };
 		}
 		const float t = Sec(g.start);  // negative during the hit-stop
 		// camera shake from the break: strong at the hit, gone in about half a second (real time)
@@ -787,23 +787,33 @@ namespace Cutin
 		// orbit shot: the whole body framed from behind, the camera slowly circling round to the front at the same distance
 		RE::NiPoint3     bodyAt = a->GetPosition() + RE::NiPoint3{ 0, 0, 72.0f * a->GetScale() };
 		const float      bodyDist = std::max(g_settings.cutinPartDistance, 60.0f) * 2.3f;
-		auto             ring = [&](float a_turn, RE::NiPoint3& o_pos, RE::NiQuaternion& o_rot) {
-            const float th = a->data.angle.z + 3.14159265f * (1.0f - a_turn) * g.orbitSign;  // a_turn 0 = behind, 1 = in front
-            o_pos = bodyAt + RE::NiPoint3{ std::sin(th), std::cos(th), 0 } * bodyDist + RE::NiPoint3{ 0, 0, 14.0f };
-            o_rot = RE::NiQuaternion(Frame(bodyAt - o_pos, RE::NiPoint3{ 0, 0, 1 }));
+		// starts behind on the lower body (waist height, closer), widens to the whole body as it comes round to the front
+		RE::NiPoint3 lowAt = bodyAt - RE::NiPoint3{ 0, 0, 30.0f * a->GetScale() };
+		if (auto pel = Node(a.get(), "NPC Pelvis [Pelv]")) {
+			lowAt = pel->world.translate;
+		}
+		const float lowDist = std::max(g_settings.cutinPartDistance, 60.0f) * 1.1f;
+		auto        ring = [&](float a_turn, float a_wide, RE::NiPoint3& o_pos, RE::NiQuaternion& o_rot) {
+            const float        th = a->data.angle.z + 3.14159265f * (1.0f - a_turn) * g.orbitSign;  // a_turn 0 = behind, 1 = in front
+            const RE::NiPoint3 at = lowAt + (bodyAt - lowAt) * a_wide;
+            const float        dist = lowDist + (bodyDist - lowDist) * a_wide;
+            o_pos = at + RE::NiPoint3{ std::sin(th), std::cos(th), 0 } * dist + RE::NiPoint3{ 0, 0, 14.0f * a_wide };
+            o_rot = RE::NiQuaternion(Frame(at - o_pos, RE::NiPoint3{ 0, 0, 1 }));
 		};
 		if (g.orbit && t < tm.toFace) {
 			RE::NiPoint3     rPos;
 			RE::NiQuaternion rRot;
 			if (t < tm.in) {
-				ring(0.0f, rPos, rRot);
+				ring(0.0f, 0.0f, rPos, rRot);
 				const float k = Ease(t / tm.in);
 				pos = g.fromPos + (rPos - g.fromPos) * k;
 				rot = Slerp(g.fromRot, rRot, k);
 			} else if (t < tm.partHold) {
-				ring(Ease((t - tm.in) / (tm.partHold - tm.in)), pos, rot);
+				// round to the front over most of the phase, then hold the whole body a moment
+				const float u = std::clamp((t - tm.in) / (0.80f * (tm.partHold - tm.in)), 0.0f, 1.0f);
+				ring(Ease(u), Ease(u), pos, rot);
 			} else {
-				ring(1.0f, rPos, rRot);
+				ring(1.0f, 1.0f, rPos, rRot);
 				const float k = Ease((t - tm.partHold) / (tm.toFace - tm.partHold));
 				pos = Orbit(faceAt, rPos, fPos, k);
 				rot = Slerp(rRot, fRot, k);
