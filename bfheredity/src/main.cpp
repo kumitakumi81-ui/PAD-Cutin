@@ -61,6 +61,8 @@ namespace
 		bool          animations = true;      // Soulgem Oven's extraction / insertion animations
 		float         collectSeconds = 8.0f;  // length of the extraction animation before the DNA drops
 		float         insertSeconds = 4.0f;   // length of the insertion animation before it is in
+		bool          sounds = true;          // SexLab voices during collection / insertion
+		float         voiceInterval = 2.5f;
 	};
 	Settings g_settings;
 
@@ -115,6 +117,10 @@ namespace
 				g_settings.fhuAmount = static_cast<float>(std::atof(val.c_str()));
 			} else if (key == "bmaleonly") {
 				g_settings.maleOnly = b();
+			} else if (key == "bsounds") {
+				g_settings.sounds = b();
+			} else if (key == "fvoiceinterval") {
+				g_settings.voiceInterval = static_cast<float>(std::atof(val.c_str()));
 			} else if (key == "banimations") {
 				g_settings.animations = b();
 			} else if (key == "fcollectseconds") {
@@ -784,7 +790,42 @@ namespace
 		}
 	}
 
+	// SexLab's voice sounds (SexLab.esm): Male01-04 / Female01-08, each Hot / Medium / Mild
+	enum class Heat
+	{
+		kMild,
+		kMedium,
+		kHot
+	};
+	void Voice(RE::Actor* a_actor, Heat a_heat)
+	{
+		if (!a_actor || !g_settings.sounds) {
+			return;
+		}
+		const bool    female = a_actor->GetActorBase() && a_actor->GetActorBase()->GetSex() == RE::SEX::kFemale;
+		const auto    n = static_cast<std::uint32_t>((a_actor->GetFormID() * 2654435761u) >> 16) % (female ? 8u : 4u);
+		const auto    first = female ? 0x67546u : 0x6755Eu;
+		const auto    off = a_heat == Heat::kHot ? 0u : (a_heat == Heat::kMedium ? 1u : 2u);
+		auto          snd = RE::TESDataHandler::GetSingleton()->LookupForm(first + n * 3u + off, "SexLab.esm");
+		if (snd) {
+			CallMethod(snd, "Sound", "Play", nullptr, static_cast<RE::TESObjectREFR*>(a_actor));
+		}
+	}
+
+	// keeps voicing a_id every voiceInterval while a_until says so, getting hotter over a_total seconds
+	void VoiceLoop(RE::FormID a_id, float a_elapsed, float a_total, std::function<bool()> a_until)
+	{
+		if (!g_settings.sounds || !a_until()) {
+			return;
+		}
+		const float t = a_total > 0.0f ? a_elapsed / a_total : 1.0f;
+		Voice(RE::TESForm::LookupByID<RE::Actor>(a_id), t < 0.4f ? Heat::kMild : (t < 0.8f ? Heat::kMedium : Heat::kHot));
+		const float step = std::max(1.0f, g_settings.voiceInterval);
+		Later(step, [a_id, a_elapsed, a_total, a_until, step] { VoiceLoop(a_id, a_elapsed + step, a_total, a_until); });
+	}
+
 	std::atomic_bool g_dnaBusy = false;
+	std::atomic_bool g_collecting = false;
 	void             GiveDna(RE::FormID a_id);
 
 	void CollectFrom(RE::Actor* a);
@@ -822,8 +863,12 @@ namespace
 		// Soulgem Oven's extraction animation (dse-sgo-wanking01-01 -> 02 loop -> 03), then the DNA drops
 		if (Anim(a, "bfh-collect01-01")) {
 			HoldNpc(a, true);
+			g_collecting = true;
+			VoiceLoop(id, 0.0f, g_settings.collectSeconds, [] { return g_collecting.load(); });
 			Later(g_settings.collectSeconds, [id] {
 				auto a = RE::TESForm::LookupByID<RE::Actor>(id);
+				g_collecting = false;
+				Voice(a, Heat::kHot);
 				GiveDna(id);
 				Anim(a, "bfh-collect01-03");
 				Later(2.5f, [id] {
@@ -958,7 +1003,9 @@ namespace
 		// Soulgem Oven's insertion animation, then it is in
 		if (Anim(pc, "bfh-insert01")) {
 			HoldPlayer(true);
+			Voice(pc, Heat::kMild);
 			Later(g_settings.insertSeconds, [a_item] {
+				Voice(RE::PlayerCharacter::GetSingleton(), Heat::kMedium);
 				if (auto d = DnaByItem(a_item)) {
 					InjectDna(*d);
 				}
