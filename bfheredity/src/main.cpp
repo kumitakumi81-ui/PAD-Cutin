@@ -910,7 +910,7 @@ namespace
 		}
 		const RE::FormID id = a->GetFormID();
 		// extraction: animation (when registered), voice, camera, then the DNA drops after collectSeconds
-		const bool anim = Anim(a, "bfh-collect01-01");
+		const bool anim = Anim(a, "dse-sgo-wanking01-01");
 		HoldNpc(a, true);
 		g_collecting = true;
 		VoiceLoop(id, 0.0f, g_settings.collectSeconds, [] { return g_collecting.load(); });
@@ -921,7 +921,7 @@ namespace
 			Voice(a, Heat::kHot);
 			GiveDna(id);
 			if (anim) {
-				Anim(a, "bfh-collect01-03");
+				Anim(a, "dse-sgo-wanking01-03");
 			}
 			Later(anim ? 2.5f : 0.5f, [id, anim] {
 				auto a = RE::TESForm::LookupByID<RE::Actor>(id);
@@ -1051,7 +1051,7 @@ namespace
 		auto pc = RE::PlayerCharacter::GetSingleton();
 		g_dnaBusy = true;
 		// insertion: animation (when registered), voice, camera, then it is in after insertSeconds
-		const bool anim = Anim(pc, "bfh-insert01");
+		const bool anim = Anim(pc, "dse-sgo-insert01-01");
 		HoldPlayer(true);
 		g_inserting = true;
 		VoiceLoop(pc->GetFormID(), 0.0f, g_settings.insertSeconds, [] { return g_inserting.load(); });
