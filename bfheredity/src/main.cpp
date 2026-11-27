@@ -50,6 +50,10 @@ namespace
 		bool          inherit = true;
 		bool          nameOnBirth = true;
 		std::uint32_t renameKey = 0x31;  // N
+		int           assistFramework = 0;      // "help him" collection: 0 = OStim if loaded else SexLab, 1 = SexLab, 2 = OStim
+		bool          naturalConception = true;  // the DNA goes in as Beeing Female sperm: a child only when she ovulates (BF's own rules)
+		float         testMinDays = 1.0f;        // a pregnancy test shows positive this many days after conception
+		float         gentleMinHours = 6.0f, gentleMaxHours = 12.0f;  // the gentle ovulation drug works after this long
 		bool          ovulationVideo = true;  // a short video in a corner window when the player starts to ovulate (Beeing Female)
 		std::uint32_t videoTestKey = 0;       // plays it at once (0 = off)
 		bool          hairStyle = true;
@@ -152,6 +156,16 @@ namespace
 				g_settings.cutinPlayer = g_settings.camera;
 			} else if (key == "finsertcamerazoom") {
 				g_settings.insertCameraZoom = static_cast<float>(std::atof(val.c_str()));
+			} else if (key == "iassistframework") {
+				g_settings.assistFramework = std::atoi(val.c_str());
+			} else if (key == "bnaturalconception") {
+				g_settings.naturalConception = b();
+			} else if (key == "ftestmindays") {
+				g_settings.testMinDays = static_cast<float>(std::atof(val.c_str()));
+			} else if (key == "fgentleminhours") {
+				g_settings.gentleMinHours = static_cast<float>(std::atof(val.c_str()));
+			} else if (key == "fgentlemaxhours") {
+				g_settings.gentleMaxHours = static_cast<float>(std::atof(val.c_str()));
 			} else if (key == "bovulationvideo") {
 				g_settings.ovulationVideo = b();
 			} else if (key == "ivideotestkey") {
@@ -1071,6 +1085,14 @@ namespace
 				RunModEvent("SR_InflateInjectorEvent", { PushForm(pc), PushForm(owner), PushBool(true), PushInt(1), PushFloat(amount), PushInt(2), PushString("") });
 			},
 			race, std::string("sr.inflater.race.cum.amount"), 0.75f);
+		auto ctrl0 = RE::TESDataHandler::GetSingleton()->LookupForm<RE::TESQuest>(0x182A, "BeeingFemale.esm");
+		if (g_settings.naturalConception && owner) {
+			// Beeing Female's own sperm: it stays some days, a child only if she ovulates meanwhile, contraception counts
+			const float amount = d.tier >= 100 ? 1.0f : (d.tier >= 50 ? 0.6f : 0.35f);
+			const bool  ok = CallMethod(ctrl0, "FWController", "AddSperm", nullptr, static_cast<RE::Actor*>(pc), owner, amount);
+			Log("DNA: sperm of {:08X} x{:.2f} -> {}", d.owner, amount, ok ? "Beeing Female" : "Beeing Female controller not found");
+			return;
+		}
 		// Beeing Female: pregnant by the owner with the DNA's chance
 		const int roll = static_cast<int>(std::random_device{}() % 100u);
 		if (!owner || roll >= d.tier) {
@@ -1083,6 +1105,266 @@ namespace
 	}
 
 	std::deque<RE::FormID> g_pendingDna;
+
+	// ------------------------------------------------------------------ pregnancy items (0.6)
+	RE::FormID Own(std::uint32_t a_local)
+	{
+		auto f = RE::TESDataHandler::GetSingleton()->LookupForm(a_local, kPlugin);
+		return f ? f->GetFormID() : 0;
+	}
+	RE::TESQuest* BFController() { return RE::TESDataHandler::GetSingleton()->LookupForm<RE::TESQuest>(0x182A, "BeeingFemale.esm"); }
+	float         GameDays()
+	{
+		auto c = RE::Calendar::GetSingleton();
+		return c ? c->GetDaysPassed() : 0.0f;
+	}
+
+	// Beeing Female's state of the player: 0 follicular, 1 ovulation, 2 luteal, 3 menstruation, 4-7 pregnant (trimesters, labour), 8 recovery
+	void CycleState(std::function<void(int)> a_cb)
+	{
+		CallStatic(
+			"StorageUtil", "GetIntValue", [a_cb](const RE::BSScript::Variable& v) { a_cb(v.IsInt() ? v.GetSInt() : -1); },
+			static_cast<RE::TESForm*>(RE::PlayerCharacter::GetSingleton()), std::string("FW.CurrentState"), static_cast<std::int32_t>(-1));
+	}
+
+	double g_ovulationDue = 0.0;  // game days; the gentle drug's ovulation (co-save)
+
+	// whether a drug can still start an ovulation in this cycle; says why not
+	bool DrugCanWork(int a_state)
+	{
+		if (a_state < 0) {
+			Notify("体に変化はなかった（Beeing Female の状態が分からない）");
+		} else if (a_state >= 4) {
+			Notify("……お腹の子がいる今は、何も起こらないようだ");
+		} else if (a_state == 1) {
+			Notify("もう体は準備ができている気がする");
+		} else if (a_state == 2) {
+			Notify("今の周期では、もう効かないようだ");
+		} else {
+			return true;
+		}
+		return false;
+	}
+
+	void StartOvulation(const char* a_why)
+	{
+		CallMethod(BFController(), "FWController", "ChangeState", nullptr, static_cast<RE::Actor*>(RE::PlayerCharacter::GetSingleton()), static_cast<std::int32_t>(1));
+		Log("cycle: ovulation started by {}", a_why);
+		Notify("お腹の奥が、じんわりと熱い……");
+	}
+
+	void UseDrugInstant()
+	{
+		CycleState([](int st) {
+			if (DrugCanWork(st)) {
+				StartOvulation("the instant drug");
+			}
+		});
+	}
+
+	void UseDrugGentle()
+	{
+		CycleState([](int st) {
+			if (!DrugCanWork(st)) {
+				return;
+			}
+			if (g_ovulationDue > 0.0) {
+				Notify("前の薬がまだ効いている途中だ");
+				return;
+			}
+			static std::mt19937 s_rng{ std::random_device{}() };
+			const float lo = std::max(g_settings.gentleMinHours, 0.0f), hi = std::max(g_settings.gentleMaxHours, lo);
+			const float hours = std::uniform_real_distribution<float>(lo, hi)(s_rng);
+			g_ovulationDue = GameDays() + hours / 24.0;
+			Log("cycle: the gentle drug works in {:.1f} h", hours);
+			Notify("苦い薬だ……効くまで、少し時間がかかりそうだ");
+		});
+	}
+
+	void CheckGentleDrug()
+	{
+		if (g_ovulationDue <= 0.0 || GameDays() < g_ovulationDue) {
+			return;
+		}
+		g_ovulationDue = 0.0;
+		CycleState([](int st) {
+			if (st == 0 || st == 3) {
+				StartOvulation("the gentle drug");
+			}
+		});
+	}
+
+	void UseContraceptive()
+	{
+		CallMethod(BFController(), "FWController", "AddContraception", nullptr, static_cast<RE::Actor*>(RE::PlayerCharacter::GetSingleton()), 100.0f);
+		Log("contraception +100");
+		Notify("避妊の備えをした");
+	}
+
+	void UsePregnancyTest()
+	{
+		auto pc = RE::PlayerCharacter::GetSingleton();
+		CycleState([pc](int st) {
+			if (st < 4 || st > 7) {
+				Notify("……陰性。印は浮かばなかった");
+				Log("pregnancy test: negative (state {})", st);
+				return;
+			}
+			CallStatic(
+				"StorageUtil", "GetFloatValue",
+				[pc, st](const RE::BSScript::Variable& v) {
+					const float since = GameDays() - (v.IsFloat() ? v.GetFloat() : 0.0f);
+					if (since < g_settings.testMinDays) {
+						Notify("……陰性？　まだ早すぎるのかもしれない");
+						Log("pregnancy test: too early ({:.2f} days)", since);
+						return;
+					}
+					if (auto pos = RE::TESForm::LookupByID<RE::TESBoundObject>(Own(PoolData::kPositiveTest))) {
+						pc->AddObjectToContainer(pos, nullptr, 1, nullptr);
+					}
+					Notify("……陽性。くっきりと印が浮かんだ");
+					Log("pregnancy test: positive (state {}, {:.1f} days)", st, since);
+					// the father may now be told: he joins BFH_FatherFaction, which opens his dialogue line
+					CallStatic(
+						"StorageUtil", "FormListGet",
+						[](const RE::BSScript::Variable& f) {
+							auto dad = AsForm(f) ? AsForm(f)->As<RE::Actor>() : nullptr;
+							auto fac = RE::TESForm::LookupByID<RE::TESFaction>(Own(PoolData::kFatherFaction));
+							if (dad && fac && !dad->IsInFaction(fac)) {
+								dad->AddToFaction(fac, 0);
+								Log("father {:08X} can be told", dad->GetFormID());
+							}
+						},
+						static_cast<RE::TESForm*>(pc), std::string("FW.ChildFather"), static_cast<std::int32_t>(0));
+				},
+				static_cast<RE::TESForm*>(pc), std::string("FW.LastConception"), 0.0f);
+		});
+	}
+
+	bool UsePregnancyItem(RE::FormID a_item)
+	{
+		if (a_item == Own(PoolData::kDrugInstant)) {
+			UseDrugInstant();
+		} else if (a_item == Own(PoolData::kDrugGentle)) {
+			UseDrugGentle();
+		} else if (a_item == Own(PoolData::kPregnancyTest)) {
+			UsePregnancyTest();
+		} else if (a_item == Own(PoolData::kContraceptive)) {
+			UseContraceptive();
+		} else {
+			return false;
+		}
+		return true;
+	}
+
+	// ------------------------------------------------------------------ "I'll help you": collection through SexLab or OStim
+	void GiveDna(RE::FormID id);
+
+	// asks a_running every second (after a short start) until it says no, then a_done; gives up after ~10 minutes
+	void WaitWhile(std::function<void(std::function<void(bool)>)> a_running, std::function<void()> a_done, int a_left = 600)
+	{
+		Later(1.0f, [a_running, a_done, a_left] {
+			a_running([a_running, a_done, a_left](bool running) {
+				if (running && a_left > 0) {
+					WaitWhile(a_running, a_done, a_left - 1);
+				} else {
+					a_done();
+				}
+			});
+		});
+	}
+
+	void AssistDone(RE::FormID a_npc)
+	{
+		Log("assist: scene over, collecting from {:08X}", a_npc);
+		GiveDna(a_npc);
+		g_dnaBusy = false;
+	}
+
+	bool StartAssistOStim(RE::Actor* a_npc)
+	{
+		if (!RE::TESDataHandler::GetSingleton()->LookupModByName("OStim.esp")) {
+			return false;
+		}
+		const RE::FormID           id = a_npc->GetFormID();
+		std::vector<RE::Actor*> actors{ a_npc, RE::PlayerCharacter::GetSingleton() };
+		CallStatic(
+			"OLibrary", "GetRandomSceneWithAction",
+			[id](const RE::BSScript::Variable& v) {
+				const std::string scene = v.IsString() ? std::string(v.GetString()) : std::string();
+				auto              npc = RE::TESForm::LookupByID<RE::Actor>(id);
+				if (scene.empty() || !npc) {
+					Notify("OStim に合うアニメーションが見つかりません");
+					Log("assist: OStim has no handjob scene");
+					g_dnaBusy = false;
+					return;
+				}
+				std::vector<RE::Actor*> actors{ npc, RE::PlayerCharacter::GetSingleton() };
+				CallStatic(
+					"OThread", "QuickStart",
+					[id, scene](const RE::BSScript::Variable& t) {
+						const int tid = t.IsInt() ? t.GetSInt() : -1;
+						Log("assist: OStim scene {} thread {}", scene, tid);
+						if (tid < 0) {
+							Notify("OStim のシーンを始められませんでした");
+							g_dnaBusy = false;
+							return;
+						}
+						WaitWhile([tid](std::function<void(bool)> a_answer) {
+							CallStatic("OThread", "IsRunning", [a_answer](const RE::BSScript::Variable& r) { a_answer(r.IsBool() && r.GetBool()); }, static_cast<std::int32_t>(tid));
+						},
+							[id] { AssistDone(id); });
+					},
+					actors, scene, static_cast<RE::TESObjectREFR*>(nullptr));
+			},
+			actors, std::string("handjob"));
+		return true;
+	}
+
+	bool StartAssistSexLab(RE::Actor* a_npc)
+	{
+		auto sl = RE::TESDataHandler::GetSingleton()->LookupForm<RE::TESQuest>(0xD62, "SexLab.esm");
+		if (!sl) {
+			return false;
+		}
+		const RE::FormID id = a_npc->GetFormID();
+		RE::Actor*       none = nullptr;
+		const bool       ok = CallMethod(
+            sl, "SexLabFramework", "QuickStart",
+            [id](const RE::BSScript::Variable&) {
+                Log("assist: SexLab scene asked");
+                // the thread takes a moment to pick up the actors; then wait while he is in it
+                Later(4.0f, [id] {
+                    WaitWhile([id](std::function<void(bool)> a_answer) {
+                        auto sl2 = RE::TESDataHandler::GetSingleton()->LookupForm<RE::TESQuest>(0xD62, "SexLab.esm");
+                        CallMethod(sl2, "SexLabFramework", "IsActorActive", [a_answer](const RE::BSScript::Variable& r) { a_answer(r.IsBool() && r.GetBool()); },
+                            RE::TESForm::LookupByID<RE::Actor>(id));
+                    },
+                        [id] { AssistDone(id); });
+                });
+            },
+            static_cast<RE::Actor*>(RE::PlayerCharacter::GetSingleton()), a_npc, none, none, none, none, std::string("BFHCollect"), std::string("Handjob"));
+		return ok;
+	}
+
+	void AssistFrom(RE::Actor* a)
+	{
+		if (!g_settings.dna || !a) {
+			return;
+		}
+		if (g_dnaBusy.exchange(true)) {
+			return;
+		}
+		LoadSettings(false);
+		const bool hasOStim = RE::TESDataHandler::GetSingleton()->LookupModByName("OStim.esp") != nullptr;
+		const int  which = g_settings.assistFramework == 0 ? (hasOStim ? 2 : 1) : g_settings.assistFramework;
+		const bool ok = which == 2 ? StartAssistOStim(a) : StartAssistSexLab(a);
+		Log("assist: {} with {:08X}: {}", which == 2 ? "OStim" : "SexLab", a->GetFormID(), ok ? "asked" : "not available");
+		if (!ok) {
+			Notify(which == 2 ? "OStim が見つかりません" : "SexLab が見つかりません");
+			g_dnaBusy = false;
+		}
+	}
 
 	// the "collect" dialogue line in BFHeredity.esp: when the NPC finishes answering, start collecting from him
 	class TopicSink : public RE::BSTEventSink<RE::TESTopicInfoEvent>
@@ -1097,10 +1379,20 @@ namespace
 				auto f = RE::TESDataHandler::GetSingleton()->LookupForm(PoolData::kCollectInfo, kPlugin);
 				return f ? f->GetFormID() : 0u;
 			}();
+			const RE::FormID who = a_event->speakerRef->GetFormID();
+			if (a_event->topicInfoFormID == Own(PoolData::kAssistInfo)) {
+				Later(1.0f, [who] { AssistFrom(RE::TESForm::LookupByID<RE::Actor>(who)); });
+				return RE::BSEventNotifyControl::kContinue;
+			}
+			for (std::size_t i = 0; i < std::size(PoolData::kTellInfos); ++i) {
+				if (a_event->topicInfoFormID == Own(PoolData::kTellInfos[i])) {
+					Log("told {:08X} (line {})", who, i);
+					return RE::BSEventNotifyControl::kContinue;
+				}
+			}
 			if (!s_info || a_event->topicInfoFormID != s_info) {
 				return RE::BSEventNotifyControl::kContinue;
 			}
-			const RE::FormID who = a_event->speakerRef->GetFormID();
 			Later(1.0f, [who] {  // let the dialogue menu close first
 				CollectFrom(RE::TESForm::LookupByID<RE::Actor>(who));
 			});
@@ -1150,6 +1442,9 @@ namespace
 			}
 			const RE::FormID item = a_event->baseObject;
 			SKSE::GetTaskInterface()->AddTask([item] {
+				if (UsePregnancyItem(item)) {
+					return;
+				}
 				if (DnaByItem(item)) {
 					g_pendingDna.push_back(item);  // played once the inventory is closed
 				}
@@ -1232,6 +1527,7 @@ namespace
 	{
 		if (g_ready) {
 			CheckOvulation();
+			CheckGentleDrug();
 		}
 		if (!g_ready || g_slots.empty()) {
 			return;
@@ -1305,6 +1601,7 @@ namespace
 	constexpr std::uint32_t kSerUid = 'BFHR';
 	constexpr std::uint32_t kSerSlots = 'SLOT';
 	constexpr std::uint32_t kSerDna = 'DNAS';
+	constexpr std::uint32_t kSerCycle = 'OVUL';
 
 	void OnSave(SKSE::SerializationInterface* a_ser)
 	{
@@ -1330,6 +1627,9 @@ namespace
 			std::uint8_t named = s.named ? 1 : 0;
 			a_ser->WriteRecordData(named);
 			a_ser->WriteRecordData(s.looks);
+		}
+		if (a_ser->OpenRecord(kSerCycle, 1)) {
+			a_ser->WriteRecordData(g_ovulationDue);
 		}
 		if (!a_ser->OpenRecord(kSerDna, 1)) {
 			return;
@@ -1370,6 +1670,7 @@ namespace
 		}
 		g_namingQueue.clear();
 		g_prompting = false;
+		g_ovulationDue = 0.0;
 		for (auto& d : g_dna) {
 			if (d.tier) {
 				if (auto f = RE::TESForm::LookupByID<RE::AlchemyItem>(d.item)) {
@@ -1393,6 +1694,10 @@ namespace
 		std::uint32_t type, version, length;
 		int           restored = 0;
 		while (a_ser->GetNextRecordInfo(type, version, length)) {
+			if (type == kSerCycle) {
+				a_ser->ReadRecordData(g_ovulationDue);
+				continue;
+			}
 			if (type == kSerDna) {
 				std::uint32_t n = 0;
 				a_ser->ReadRecordData(n);
