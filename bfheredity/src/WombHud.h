@@ -16,6 +16,8 @@ namespace Womb
 		int         donors[6]{};     // race look of the donors still inside (Womb::Race)
 		int         donorN = 0;
 		int         fatherLook = -1;  // race look of the child's father (Womb::Race), -1 unknown
+		std::uint32_t fatherId = 0;     // father's form id (picks a stable model variant)
+		std::uint32_t fatherRace = 0;   // father's race form id
 	};
 	// how their seed looks in the HUD
 	enum Race

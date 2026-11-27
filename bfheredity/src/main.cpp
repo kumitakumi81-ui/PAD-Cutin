@@ -3169,6 +3169,8 @@ namespace
 				std::scoped_lock l(Womb::g_lock);
 				Womb::g_data.father = FormName(AsForm(v));
 				Womb::g_data.fatherLook = look;
+				Womb::g_data.fatherId = dad ? dad->GetFormID() : 0;
+				Womb::g_data.fatherRace = dad && dad->GetRace() ? dad->GetRace()->GetFormID() : 0;
 			},
 			pc, std::string("FW.ChildFather"), static_cast<std::int32_t>(0));
 		CallStatic(
@@ -3585,23 +3587,57 @@ namespace
 		return nullptr;
 	}
 
+	// which fetus model: the father's race, mixed with the mother's, plus a per-father stable pick
+	bool IsRace(std::uint32_t id, std::initializer_list<std::uint32_t> ids) { return std::find(ids.begin(), ids.end(), id) != ids.end(); }
+	std::string FetusVariant(int look, std::uint32_t dadId, std::uint32_t dadRace, RE::PlayerCharacter* pc)
+	{
+		const std::uint32_t momRace = pc && pc->GetRace() ? pc->GetRace()->GetFormID() : 0;
+		const std::uint32_t h = (dadId * 2654435761u) ^ 0x9E3779B9u;
+		const bool dadRedguard = IsRace(dadRace, { 0x013748, 0x088846 });
+		const bool dadNord = IsRace(dadRace, { 0x013746, 0x088794 });
+		const bool momRedguard = IsRace(momRace, { 0x013748, 0x088846 });
+		const bool momNord = IsRace(momRace, { 0x013746, 0x088794 });
+		switch (look) {
+		case Womb::kOrc:
+			return (h >> 7) & 1 ? "orc2" : "orc";
+		case Womb::kElf:
+			return "elf";
+		case Womb::kKhajiit:
+			return "khajiit";
+		case Womb::kArgonian:
+			return "argonian";
+		default:
+			break;
+		}
+		if ((dadRedguard && momNord) || (dadNord && momRedguard)) {
+			return "rgnord";  // Redguard x Nord: dark skin, golden curls
+		}
+		if (dadRedguard || momRedguard) {
+			return "human2";  // Redguard half
+		}
+		return "human";
+	}
+
 	// main thread: which model should be in her now, attach / swap / remove it
 	void UpdateFetus()
 	{
 		auto pc = RE::PlayerCharacter::GetSingleton();
 		int  st, look;
 		float daysIn;
+		std::uint32_t dadId, dadRace;
 		{
 			std::scoped_lock l(Womb::g_lock);
 			st = Womb::g_data.state;
 			look = Womb::g_data.fatherLook;
 			daysIn = Womb::g_data.daysIn;
+			dadId = Womb::g_data.fatherId;
+			dadRace = Womb::g_data.fatherRace;
 		}
 		std::string want;
 		if (g_settings.fetusModel && st >= 5 && st <= 7) {
-			static const char* kRace[] = { "human", "orc", "elf", "khajiit", "argonian", "human", "human", "human" };
 			const int step = st == 5 ? (daysIn < Womb::Length(5) * 0.5f ? 1 : 2) : 3;
-			want = std::string("BFHeredity\\Fetus\\fetus_") + kRace[std::clamp(look, 0, 7)] + "_" + std::to_string(step) + ".nif";
+			const std::string kind = FetusVariant(look, dadId, dadRace, pc);
+			want = std::string("BFHeredity\\Fetus\\fetus_") + kind + "_" + std::to_string(step) + ".nif";
 		}
 		auto belly = BellyNode(pc);
 		if (want.empty() || !belly) {
