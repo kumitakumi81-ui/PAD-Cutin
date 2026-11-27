@@ -289,7 +289,23 @@ namespace Womb
 		if (t - s_flashT < Orb::Length("flash")) {
 			orbOk = Orb::Draw(dl, "flash", c.x, c.y, orbD, t - s_flashT, 1.0f, false, Tint(d.fatherLook));
 		} else {
-			orbOk = Orb::Draw(dl, orbName, c.x, c.y, orbD, t, d.state == 8 || d.state == 2 ? 0.75f : 1.0f, true, preg ? Tint(d.fatherLook) : 0xFFFFFFu);
+			// pregnant: the child of the father's race, growing in three steps (state 5 first / second half, then 6-7)
+			if (d.state >= 5 && d.state <= 7) {
+				static const char* kRaceKey[] = { "human", "orc", "elf", "khajiit", "argonian", "human", "human", "human" };
+				const int   step = d.state == 5 ? (prog < 0.5f ? 1 : 2) : 3;
+				const char* rk = kRaceKey[std::clamp(d.fatherLook, 0, 7)];
+				char        nm[48];
+				std::snprintf(nm, sizeof(nm), "fetus_%s_%d", rk, step);
+				const bool  ownColours = d.fatherLook >= kOrc && d.fatherLook <= kArgonian;
+				orbOk = Orb::Draw(dl, nm, c.x, c.y, orbD, t, 1.0f, true, ownColours ? 0xFFFFFFu : Tint(d.fatherLook));
+				if (!orbOk) {
+					std::snprintf(nm, sizeof(nm), "fetus_human_%d", step);
+					orbOk = Orb::Draw(dl, nm, c.x, c.y, orbD, t, 1.0f, true, Tint(d.fatherLook));
+				}
+			}
+			if (!orbOk) {
+				orbOk = Orb::Draw(dl, orbName, c.x, c.y, orbD, t, d.state == 8 || d.state == 2 ? 0.75f : 1.0f, true, preg ? Tint(d.fatherLook) : 0xFFFFFFu);
+			}
 		}
 		if (orbOk) {
 			KKMenu::AddCircleFilled(dl, c, orbD * 0.62f, Col(255, 90, 160, 0.05f + 0.10f * heat * pulse), 40);  // warmth
