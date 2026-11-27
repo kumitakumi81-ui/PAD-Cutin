@@ -60,6 +60,15 @@
           }
         },
         {
+          "id": "bConceptionVideo:Video",
+          "text": "受精した瞬間の動画",
+          "type": "toggle",
+          "help": "Beeing Female で妊娠した瞬間、右上の小窓で受精の動画（conception.mp4）を再生する",
+          "valueOptions": {
+            "sourceType": "ModSettingBool"
+          }
+        },
+        {
           "id": "bVideoSound:Video",
           "text": "動画の音",
           "type": "toggle",
