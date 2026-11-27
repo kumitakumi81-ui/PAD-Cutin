@@ -51,6 +51,9 @@ namespace
 		bool          nameOnBirth = true;
 		std::uint32_t renameKey = 0x31;  // N
 		bool          useOCum = true;           // OCum Ascended: its look on her after insertion
+		bool          softAbs = true;           // while pregnant, take the abs morphs back (Skill Based Muscle's + the ones built into the body)
+		float         bakedAbs = 1.0f;          // MuscleAbs / MuscleMoreAbs_v2 built into the body in BodySlide (Wonder Woman preset = 1.0)
+		float         softAbsStrength = 1.0f;   // 1 = flat at the last stage
 		bool          soloScene = true;         // "collect" plays a SexLab / OStim solo scene (OStrands etc. draw it) instead of Soulgem Oven's animation
 		int           assistFramework = 0;      // "help him" collection: 0 = OStim if loaded else SexLab, 1 = SexLab, 2 = OStim
 		bool          naturalConception = true;  // the DNA goes in as Beeing Female sperm: a child only when she ovulates (BF's own rules)
@@ -158,6 +161,12 @@ namespace
 				g_settings.cutinPlayer = g_settings.camera;
 			} else if (key == "finsertcamerazoom") {
 				g_settings.insertCameraZoom = static_cast<float>(std::atof(val.c_str()));
+			} else if (key == "bsoftabs") {
+				g_settings.softAbs = b();
+			} else if (key == "fbakedabs") {
+				g_settings.bakedAbs = static_cast<float>(std::atof(val.c_str()));
+			} else if (key == "fsoftabsstrength") {
+				g_settings.softAbsStrength = static_cast<float>(std::atof(val.c_str()));
 			} else if (key == "bsoloscene") {
 				g_settings.soloScene = b();
 			} else if (key == "buseocum") {
@@ -1529,6 +1538,61 @@ namespace
 
 	// Beeing Female's cycle: StorageUtil "FW.CurrentState" on the woman (0 follicular, 1 ovulation, 2 luteal, 3 menstruation, ...)
 	std::atomic<int> g_lastCycle{ -1 };
+	// pregnant: a growing belly has no six-pack. The abs morphs are taken back under our own key in step with the stage.
+	std::atomic<float> g_absStage{ -1.0f };
+	std::mutex         g_absLock;
+	std::map<std::string, float> g_absSet;
+
+	void ApplySoftAbs(int a_state)
+	{
+		LoadSettings(false);
+		float t = 0.0f;
+		if (g_settings.softAbs) {
+			switch (a_state) {
+			case 4: t = 0.4f; break;
+			case 5: t = 0.75f; break;
+			case 6:
+			case 7: t = 1.0f; break;
+			case 8: t = 0.5f; break;  // recovering
+			default: break;
+			}
+		}
+		t *= g_settings.softAbsStrength;
+		auto pc = RE::PlayerCharacter::GetSingleton();
+		if (!pc) {
+			return;
+		}
+		auto ref = static_cast<RE::TESObjectREFR*>(pc);
+		for (const char* name : { "MuscleAbs", "MuscleMoreAbs_v2" }) {
+			const std::string morph(name);
+			CallStatic(
+				"NiOverride", "GetBodyMorph",
+				[morph, t](const RE::BSScript::Variable& v) {
+					const float sbm = v.IsFloat() ? v.GetFloat() : 0.0f;
+					const float want = t > 0.0f ? -(sbm + g_settings.bakedAbs) * t : 0.0f;
+					{
+						std::scoped_lock l(g_absLock);
+						auto it = g_absSet.find(morph);
+						const float had = it == g_absSet.end() ? 0.0f : it->second;
+						if (std::abs(had - want) < 0.01f && it != g_absSet.end()) {
+							return;
+						}
+						g_absSet[morph] = want;
+					}
+					auto pc = RE::PlayerCharacter::GetSingleton();
+					auto ref = static_cast<RE::TESObjectREFR*>(pc);
+					if (want == 0.0f) {
+						CallStatic("NiOverride", "ClearBodyMorph", nullptr, ref, morph, std::string("BFHeredity"));
+					} else {
+						CallStatic("NiOverride", "SetBodyMorph", nullptr, ref, morph, std::string("BFHeredity"), want);
+					}
+					CallStatic("NiOverride", "UpdateModelWeight", nullptr, ref);
+					Log("soft abs: {} = {:.2f}", morph, want);
+				},
+				ref, morph, std::string("Skill Based Muscle.esp"));
+		}
+	}
+
 	void CheckOvulation()
 	{
 		auto pc = RE::PlayerCharacter::GetSingleton();
@@ -1543,6 +1607,7 @@ namespace
 					return;
 				}
 				const int last = g_lastCycle.exchange(st);
+				ApplySoftAbs(st);  // cheap when nothing changed
 				if (last != -1 && last != 1 && st == 1) {
 					Log("cycle: ovulation started");
 					LoadSettings(false);
@@ -1852,6 +1917,10 @@ namespace
 		case SKSE::MessagingInterface::kPreLoadGame:
 			g_ready = false;
 			g_lastCycle = -1;  // the state of the loaded game is learnt first, not taken for a change
+			{
+				std::scoped_lock l(g_absLock);
+				g_absSet.clear();  // morphs live in the save; learn them again
+			}
 			Video::Stop();
 			SKSE::GetTaskInterface()->AddTask([] { Cutin::Stop("game load"); });
 			break;

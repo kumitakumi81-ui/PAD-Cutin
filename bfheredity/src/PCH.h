@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <map>
 #include <mutex>
 #include <optional>
 #include <random>
