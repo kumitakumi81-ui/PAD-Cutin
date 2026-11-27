@@ -154,6 +154,76 @@
           }
         }
       ]
+    },
+    {
+      "pageDisplayName": "卵",
+      "content": [
+        {
+          "text": "生きたシャウラスの卵",
+          "type": "header"
+        },
+        {
+          "id": "bLiveEgg:Egg",
+          "text": "生きた卵が手に入る",
+          "type": "toggle",
+          "help": "シャウラスの卵嚢の採取や、倒したシャウラスから「生きたシャウラスの卵」が手に入る。使うと瓶と同じ演出で卵を宿す",
+          "valueOptions": {
+            "sourceType": "ModSettingBool"
+          }
+        },
+        {
+          "id": "fEggSacChance:Egg",
+          "text": "卵嚢から手に入る確率",
+          "type": "slider",
+          "help": "卵嚢を採取した時に、生きた卵も手に入る確率",
+          "valueOptions": {
+            "min": 0.0,
+            "max": 1.0,
+            "step": 0.05,
+            "formatString": "{2}",
+            "sourceType": "ModSettingFloat"
+          }
+        },
+        {
+          "id": "fEggKillChance:Egg",
+          "text": "シャウラスが持っている確率",
+          "type": "slider",
+          "help": "倒したシャウラスが生きた卵を持っている確率",
+          "valueOptions": {
+            "min": 0.0,
+            "max": 1.0,
+            "step": 0.05,
+            "formatString": "{2}",
+            "sourceType": "ModSettingFloat"
+          }
+        },
+        {
+          "id": "fEggDays:Egg",
+          "text": "宿している日数（簡易版）",
+          "type": "slider",
+          "help": "Estrus Unified が無い時の簡易版で、産卵までの日数。Estrus Unified がある時はその設定に従う",
+          "valueOptions": {
+            "min": 1.0,
+            "max": 15.0,
+            "step": 0.5,
+            "formatString": "{1}",
+            "sourceType": "ModSettingFloat"
+          }
+        },
+        {
+          "id": "iEggCount:Egg",
+          "text": "産む卵の数（簡易版）",
+          "type": "slider",
+          "help": "簡易版で産み落とすシャウラスの卵の数",
+          "valueOptions": {
+            "min": 1,
+            "max": 10,
+            "step": 1,
+            "formatString": "{0}",
+            "sourceType": "ModSettingInt"
+          }
+        }
+      ]
     }
   ]
 }
