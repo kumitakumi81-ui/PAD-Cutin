@@ -2005,8 +2005,15 @@ namespace
 		std::uint8_t talked = 0;   // 1 Eira, 2 Livia, 4 Helga
 		std::uint8_t escaped = 0;
 		std::uint8_t maiden = 0;
+		// 0.14: acts 3-5
+		RE::FormID   spy = 0;
+		RE::FormID   boss = 0;
+		std::int32_t kids = -1;     // children she had when the forge birth was awaited
+		float        nextAct = 0.0f;
+		std::uint8_t wave = 0;
 	};
 	PactState g_pact;
+	constexpr std::uint32_t kPactV1Size = offsetof(PactState, spy);
 	constexpr const char* kLordbound = "Druadach.esm";
 	bool          HasLordbound() { return RE::TESDataHandler::GetSingleton()->LookupModByName(kLordbound) != nullptr; }
 	RE::TESQuest* PactQuest() { return RE::TESDataHandler::GetSingleton()->LookupForm<RE::TESQuest>(PoolData::kPactQuest, kPlugin); }
@@ -2028,7 +2035,7 @@ namespace
 	}
 	void PactStage(std::int32_t a_stage)
 	{
-		static constexpr std::int32_t kObj[] = { 5, 20, 25, 30, 35, 40, 42, 43, 45, 50 };
+		static constexpr std::int32_t kObj[] = { 5, 20, 25, 30, 35, 40, 42, 43, 45, 50, 60, 65, 70, 75, 80, 90, 100, 110 };
 		auto       q = PactQuest();
 		const auto has = [](std::int32_t st) { return std::find(std::begin(kObj), std::end(kObj), st) != std::end(kObj); };
 		if (q && has(g_pact.stage)) {
@@ -2040,7 +2047,7 @@ namespace
 			if (has(a_stage)) {
 				CallMethod(q, "Quest", "SetObjectiveDisplayed", nullptr, a_stage, true, false);
 			}
-			if (a_stage == 150) {
+			if (a_stage == 150 || a_stage == 200) {
 				CallMethod(q, "Quest", "CompleteQuest", nullptr);
 			}
 		}
@@ -2127,6 +2134,107 @@ namespace
 			});
 		});
 	}
+	// ---- acts 3-5 (0.14)
+	RE::TESObjectREFR* PlaceBase(std::uint32_t a_base, RE::TESObjectREFR* a_at, float a_dx, float a_dy)
+	{
+		auto base = RE::TESForm::LookupByID<RE::TESNPC>(a_base);
+		if (!base || !a_at) {
+			return nullptr;
+		}
+		auto ref = a_at->PlaceObjectAtMe(base, false);
+		if (!ref) {
+			return nullptr;
+		}
+		CallMethod(ref.get(), "ObjectReference", "MoveTo", nullptr, a_at, a_dx, a_dy, 0.0f, true);
+		return ref.get();
+	}
+	void PactSpawnSpy()
+	{
+		auto at = GorekOrKeep();
+		auto spy = PlaceBase(0x0ABEE2, at, 260.0f, 120.0f);  // LvlThalmorMageMale, in a merchant's clothes
+		if (!spy) {
+			return;
+		}
+		auto a = spy->As<RE::Actor>();
+		CallMethod(spy, "ObjectReference", "SetDisplayName", nullptr, std::string("流れの行商人ファリンデル"), true);
+		CallMethod(spy, "ObjectReference", "RemoveAllItems", nullptr, static_cast<RE::TESObjectREFR*>(nullptr), false, false);
+		for (std::uint32_t id : { 0x04223Cu, 0x04223Du, 0x04223Bu }) {
+			if (auto arm = RE::TESForm::LookupByID<RE::TESObjectARMO>(id)) {
+				CallMethod(a, "Actor", "EquipItem", nullptr, static_cast<RE::TESForm*>(arm), false, true);
+			}
+		}
+		JoinFaction(a, PoolData::kPactSpyFaction);
+		g_pact.spy = spy->GetFormID();
+		PactStage(65);
+	}
+	void PactSpyUnmasked()
+	{
+		auto spy = RE::TESForm::LookupByID<RE::Actor>(g_pact.spy);
+		if (!spy) {
+			return;
+		}
+		Notify("行商人が袖から短剣を抜いた。その耳は……アルトマーだ！");
+		CallMethod(spy, "ObjectReference", "SetDisplayName", nullptr, std::string("サルモールの密偵"), true);
+		CallMethod(spy, "Actor", "StartCombat", nullptr, static_cast<RE::Actor*>(RE::PlayerCharacter::GetSingleton()));
+		PactStage(70);
+	}
+	void PactSpyDead(RE::Actor* a)
+	{
+		if (auto note = RE::TESForm::LookupByID<RE::TESBoundObject>(Own(PoolData::kPactLetter))) {
+			a->AddObjectToContainer(note, nullptr, 1, nullptr);
+		}
+		g_pact.spy = 0;
+		Notify("密偵の懐に、封蝋の押された書状がある");
+	}
+	void PactRaid()
+	{
+		auto pc = RE::PlayerCharacter::GetSingleton();
+		Notify("見張りの角笛が鳴り響く！「サルモールだ！　門を守れ！」");
+		const std::uint32_t troops[] = { 0x02B35E, 0x02B35E, 0x02B361, 0x02B362 };
+		for (int i = 0; i < 4; ++i) {
+			if (auto r = PlaceBase(troops[i], pc, -500.0f + 330.0f * i, 1400.0f)) {
+				CallMethod(r, "Actor", "StartCombat", nullptr, static_cast<RE::Actor*>(pc));
+			}
+		}
+		Later(25.0f, [] {
+			auto pc = RE::PlayerCharacter::GetSingleton();
+			if (auto b = PlaceBase(0x07DCAA, pc, 0.0f, 1600.0f)) {  // LvlThalmorBoss
+				CallMethod(b, "ObjectReference", "SetDisplayName", nullptr, std::string("審問官ヴァランディル"), true);
+				CallMethod(b, "Actor", "StartCombat", nullptr, static_cast<RE::Actor*>(pc));
+				g_pact.boss = b->GetFormID();
+				Notify("「その子を渡せ。自治領の名において」――審問官ヴァランディルが現れた");
+				PactStage(100);
+			}
+		});
+	}
+	void PactForgeBirth()
+	{
+		Fade(5.0f);
+		Blush(30.0f);
+		Notify("炉の火が赤々と燃える中、一族の女たちに手を握られて、子が産声を上げた");
+		Later(1.5f, [] {
+			if (auto keep = GorekOrKeep()) {
+				CallMethod(RE::PlayerCharacter::GetSingleton(), "ObjectReference", "MoveTo", nullptr, keep, 0.0f, -220.0f, 0.0f, true);
+			}
+		});
+		Later(3.0f, [] { PactStage(90); });
+		Later(14.0f, [] { PactRaid(); });
+	}
+	void PactReward()
+	{
+		auto pc = RE::PlayerCharacter::GetSingleton();
+		if (auto gold = RE::TESForm::LookupByID<RE::TESBoundObject>(0x00000F)) {
+			pc->AddObjectToContainer(gold, nullptr, 1500, nullptr);
+		}
+		JoinFaction(pc, PoolData::kPactOrc);
+		Fade(3.0f);
+		const char* end = g_pact.route == 1 ? "ガルシャクールの戦士団は、帝国軍の側で戦うと誓った" :
+		                  g_pact.route == 2 ? "ガルシャクールの戦士団は、ウルフリックのもとへ馬を進めた" :
+		                                      "ガルシャクールの炉に、二つの民の子の名が刻まれた";
+		Notify(end);
+		PactStage(200);
+	}
+
 	void CheckPact()
 	{
 		if (!HasLordbound()) {
@@ -2208,6 +2316,46 @@ namespace
 				}
 			});
 		}
+		// act 3: a day after the father heard the news, the rumours have a face
+		if (g_pact.stage == 60 && !g_pact.escaped) {
+			if (g_pact.nextAct <= 0.0f) {
+				g_pact.nextAct = now + 1.0f;
+			} else if (now >= g_pact.nextAct && Gorek() && Gorek()->Is3DLoaded()) {
+				g_pact.nextAct = 0.0f;
+				Notify("要塞の女たちが囁いている。「よそ者の産む子は谷に災いを呼ぶ」……そんな噂を、誰が？");
+				PactSpawnSpy();
+			}
+		}
+		// anyone may have killed them, not only her
+		if (g_pact.stage == 70 && g_pact.spy) {
+			if (auto spy = RE::TESForm::LookupByID<RE::Actor>(g_pact.spy); spy && spy->IsDead()) {
+				PactSpyDead(spy);
+			}
+		}
+		if (g_pact.stage == 100 && g_pact.boss) {
+			if (auto b = RE::TESForm::LookupByID<RE::Actor>(g_pact.boss); b && b->IsDead()) {
+				g_pact.boss = 0;
+				Notify("審問官が崩れ落ちた。残ったサルモール兵は谷へ逃げていく");
+				PactStage(110);
+			}
+		}
+		// act 4: wait for the birth (any birth while the forge watch is on)
+		if (g_pact.stage == 80) {
+			CallStatic(
+				"StorageUtil", "GetIntValue",
+				[](const RE::BSScript::Variable& v) {
+					const int n = v.IsInt() ? v.GetSInt() : 0;
+					if (g_pact.stage != 80) {
+						return;
+					}
+					if (g_pact.kids < 0) {
+						g_pact.kids = n;
+					} else if (n > g_pact.kids) {
+						PactForgeBirth();
+					}
+				},
+				static_cast<RE::TESForm*>(pc), std::string("FW.NumChilds"), static_cast<std::int32_t>(0));
+		}
 	}
 
 	// failure route: a nightmare after DA10 failed
@@ -2237,6 +2385,10 @@ namespace
 	public:
 		RE::BSEventNotifyControl ProcessEvent(const RE::TESContainerChangedEvent* a_event, RE::BSTEventSource<RE::TESContainerChangedEvent>*) override
 		{
+			if (a_event && a_event->newContainer == 0x14 && a_event->baseObj == Own(PoolData::kPactLetter) && g_pact.stage == 70) {
+				SKSE::GetTaskInterface()->AddTask([] { PactStage(75); });
+				return RE::BSEventNotifyControl::kContinue;
+			}
 			if (a_event && a_event->newContainer == 0x14 && a_event->baseObj == Own(PoolData::kTaintedBlood) && !(g_bal.trials & 4)) {
 				SKSE::GetTaskInterface()->AddTask([] { BalTrial(4, 43); });
 				return RE::BSEventNotifyControl::kContinue;
@@ -2267,6 +2419,16 @@ namespace
 				auto a = RE::TESForm::LookupByID<RE::Actor>(who);
 				if (a && IsVigilantMolagBal(a) && g_bal.qstage >= 70 && g_bal.qstage < 100) {
 					BalCure();
+					return;
+				}
+				if (a && g_pact.spy && a->GetFormID() == g_pact.spy) {
+					PactSpyDead(a);
+					return;
+				}
+				if (a && g_pact.boss && a->GetFormID() == g_pact.boss && g_pact.stage == 100) {
+					g_pact.boss = 0;
+					Notify("審問官が崩れ落ちた。残ったサルモール兵は谷へ逃げていく");
+					PactStage(110);
 					return;
 				}
 				if (a && g_pact.rival && a->GetFormID() == g_pact.rival && g_pact.stage == 43) {
@@ -2542,6 +2704,13 @@ namespace
 			} else if (info == Own(PoolData::kPactTellChief) || info == Own(PoolData::kPactTellBorak)) {
 				PactStage(60);
 				return RE::BSEventNotifyControl::kContinue;
+			} else if (info == Own(PoolData::kPactSpyTalk)) {
+				Later(1.0f, [] { PactSpyUnmasked(); });
+			} else if (info == Own(PoolData::kPactLetterChief) || info == Own(PoolData::kPactLetterBorak)) {
+				g_pact.kids = -1;
+				PactStage(80);
+			} else if (info == Own(PoolData::kPactEndChief) || info == Own(PoolData::kPactEndBorak)) {
+				Later(1.5f, [] { PactReward(); });
 			} else if (info == Own(PoolData::kPactCleanse)) {
 				Later(1.0f, [] { PactCleanse(); });
 				return RE::BSEventNotifyControl::kContinue;
@@ -3313,7 +3482,7 @@ namespace
 		if (a_ser->OpenRecord('BALX', 1)) {
 			a_ser->WriteRecordData(g_balx);
 		}
-		if (a_ser->OpenRecord('PACT', 1)) {
+		if (a_ser->OpenRecord('PACT', 2)) {
 			a_ser->WriteRecordData(g_pact);
 		}
 		if (!a_ser->OpenRecord(kSerDna, 1)) {
@@ -3394,8 +3563,9 @@ namespace
 				continue;
 			}
 			if (type == 'PACT') {
-				a_ser->ReadRecordData(g_pact);
-				for (RE::FormID* id : { &g_pact.captives[0], &g_pact.captives[1], &g_pact.captives[2], &g_pact.borak, &g_pact.rival }) {
+				g_pact = PactState{};
+				a_ser->ReadRecordData(&g_pact, std::min<std::uint32_t>(length, version >= 2 ? sizeof(PactState) : kPactV1Size));
+				for (RE::FormID* id : { &g_pact.captives[0], &g_pact.captives[1], &g_pact.captives[2], &g_pact.borak, &g_pact.rival, &g_pact.spy, &g_pact.boss }) {
 					RE::FormID n = 0;
 					*id = (*id && a_ser->ResolveFormID(*id, n)) ? n : 0;
 				}

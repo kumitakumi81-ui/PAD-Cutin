@@ -109,6 +109,13 @@ inline constexpr std::uint32_t kPactCup = 0x941;
 inline constexpr std::uint32_t kPactTellChief = 0x944;
 inline constexpr std::uint32_t kPactTellBorak = 0x945;
 inline constexpr std::uint32_t kPactCleanse = 0x948;
-inline constexpr std::uint32_t kPactAbductMsg = 0x949;
+inline constexpr std::uint32_t kPactAbductMsg = 0x956;
+inline constexpr std::uint32_t kPactSpyFaction = 0x949;
+inline constexpr std::uint32_t kPactSpyTalk = 0x94C;
+inline constexpr std::uint32_t kPactLetter = 0x955;
+inline constexpr std::uint32_t kPactLetterChief = 0x94F;
+inline constexpr std::uint32_t kPactLetterBorak = 0x950;
+inline constexpr std::uint32_t kPactEndChief = 0x953;
+inline constexpr std::uint32_t kPactEndBorak = 0x954;
 inline constexpr std::uint32_t kTellInfos[] = {0x8F5, 0x8F6, 0x8F7, 0x8F8};
 }
