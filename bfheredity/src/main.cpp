@@ -268,13 +268,13 @@ namespace
 #include "Cutin.h"
 
 	// whole body (body slot) -> face, the cut lasting about a_seconds
-	void Camera(RE::Actor* a, float a_seconds, bool a_orbit = false, float a_orbitFrom = 0.0f)
+	void Camera(RE::Actor* a, float a_seconds, bool a_orbit = false, float a_orbitFrom = 0.0f, std::uint32_t a_mask = 1u << (32 - 30))
 	{
 		if (!a || !g_settings.camera) {
 			return;
 		}
 		g_settings.cutinLength = std::clamp(a_seconds / 3.25f, 0.3f, 4.0f);
-		Cutin::Request(a, 1u << (32 - 30), a_orbit, a_orbitFrom);
+		Cutin::Request(a, a_mask, a_orbit, a_orbitFrom);
 	}
 
 	// ------------------------------------------------------------------ Papyrus calls
@@ -1370,11 +1370,57 @@ namespace
 		CallMethod(r, "Actor", "StartCombat", nullptr, static_cast<RE::Actor*>(RE::PlayerCharacter::GetSingleton()));
 		return r;
 	}
+	void Face(std::int32_t a_mood, std::int32_t a_strength, std::int32_t a_eyes);
+
+	// the curse taking hold: she sinks to her knees, black smoke is drawn into her lower belly, the mark surfaces.
+	// a_full = first time (long); relapse uses the short one
+	void BalCurseFx(bool a_full)
+	{
+		auto  pc = static_cast<RE::Actor*>(RE::PlayerCharacter::GetSingleton());
+		auto  ref = static_cast<RE::TESObjectREFR*>(pc);
+		auto* dh = RE::TESDataHandler::GetSingleton();
+		const float len = a_full ? 6.0f : 3.5f;
+		HoldPlayer(true);
+		// camera: circles from her side to the front, settles on the belly, ends on her face
+		Camera(pc, len, true, 0.5f, 1u << (49 - 30));
+		if (auto idle = dh->LookupForm<RE::TESIdleForm>(0x0E8E52, "Skyrim.esm")) {  // IdleKneelingEnter
+			CallMethod(pc, "Actor", "PlayIdle", nullptr, idle);
+		}
+		if (auto imod = dh->LookupForm<RE::TESImageSpaceModifier>(0x10F503, "Skyrim.esm")) {  // NightingaleStrifeCastImod: dark pulse
+			CallMethod(imod, "ImageSpaceModifier", "Apply", nullptr, a_full ? 1.0f : 0.6f);
+		}
+		if (auto vfx = dh->LookupForm<RE::BGSReferenceEffect>(0x10F506, "Skyrim.esm")) {  // NightingaleStrifeAbsorbTargetVFX: dark streams drawn in
+			CallMethod(vfx, "VisualEffect", "Play", nullptr, ref, len * 0.7f, static_cast<RE::TESObjectREFR*>(nullptr));
+		}
+		if (auto sh = dh->LookupForm<RE::TESEffectShader>(0x075272, "Skyrim.esm")) {  // ReanimateFXShader: black-violet haze on the body
+			CallMethod(sh, "EffectShader", "Play", nullptr, ref, len * 0.8f);
+		}
+		Face(9, 70, 30);  // fear
+		CallStatic("Game", "ShakeCamera", nullptr, static_cast<RE::TESObjectREFR*>(nullptr), 0.25f, len * 0.4f);
+		CallStatic("Game", "ShakeController", nullptr, 0.3f, 0.5f, len * 0.4f);
+		Later(len * 0.45f, [len] {
+			Blush(35);
+			Face(11, 80, 60);  // pain / sorrow, eyes half shut
+			CallStatic("Game", "ShakeCamera", nullptr, static_cast<RE::TESObjectREFR*>(nullptr), 0.5f, 0.6f);
+			CallStatic("Game", "ShakeController", nullptr, 0.6f, 0.8f, 0.5f);
+			BalWear(1, true);  // mark surfaces, glowing
+		});
+		Later(len, [] {
+			auto pc = static_cast<RE::Actor*>(RE::PlayerCharacter::GetSingleton());
+			if (auto idle = RE::TESDataHandler::GetSingleton()->LookupForm<RE::TESIdleForm>(0x0E8E53, "Skyrim.esm")) {  // IdleKneelingExit
+				CallMethod(pc, "Actor", "PlayIdle", nullptr, idle);
+			}
+			Face(-1, 0, -1);
+			ReleasePlayerAfterCamera();
+		});
+		Later(len + 4.0f, [] { BalWear(BalCurseStage(), false); });
+	}
+
 	void BalBegin()
 	{
-		Fade(3.0f);
-		Notify("黒い光が下腹部に吸い込まれた……");
-		Later(1.5f, [] {
+		BalCurseFx(true);
+		Notify("黒い煙が下腹部に染み込んでいく……");
+		Later(3.0f, [] {
 			g_bal.start = GameDays();
 			BalStage(10);
 			Later(2.0f, [] {
