@@ -45,6 +45,28 @@
           "valueOptions": {
             "sourceType": "ModSettingBool"
           }
+        },
+        {
+          "type": "header",
+          "text": "排卵の動画"
+        },
+        {
+          "id": "bOvulationVideo:Video",
+          "text": "排卵したとき動画を表示",
+          "type": "toggle",
+          "help": "Beeing Female で排卵期に入ったとき、画面右上に小さな動画を流す",
+          "valueOptions": {
+            "sourceType": "ModSettingBool"
+          }
+        },
+        {
+          "id": "bVideoSound:Video",
+          "text": "動画の音",
+          "type": "toggle",
+          "help": "動画の音声を鳴らす",
+          "valueOptions": {
+            "sourceType": "ModSettingBool"
+          }
         }
       ]
     }
