@@ -1290,6 +1290,22 @@ namespace
 	};
 	BalState     g_bal;
 	std::int32_t g_balShown = -1;  // stage * 2 + glow, as worn now
+	// 0.9: relapse, the Vigilant's road, the champion, the dark road (separate record so older saves still load)
+	struct BalExtra
+	{
+		double        failDay = 0.0;      // DA10 failed: the nightmare comes a couple of days later
+		double        dormantAt = 0.0;    // the short road put the anchor to sleep
+		double        stage4Since = 0.0;  // the mark has been complete since
+		double        nextChamp = 0.0;    // the champion's next visit
+		RE::FormID    lastSpawn = 0;      // the avatar we placed last (ref)
+		RE::FormID    champRef = 0;       // the champion now out (ref)
+		std::uint16_t vigMask = 0;        // Vigilant main quests already counted
+		std::uint8_t  relapsed = 0;
+		std::uint8_t  cured = 0;          // the root is gone (stage 100)
+		std::uint8_t  dark = 0;           // yielded (stage 200)
+		std::uint8_t  chSeen = 0;         // the mark answered Coldharbour
+	};
+	BalExtra g_balx;
 
 	RE::TESQuest* BalQuest() { return RE::TESDataHandler::GetSingleton()->LookupForm<RE::TESQuest>(PoolData::kBalQuest, kPlugin); }
 	void          BalStage(std::int32_t a_stage)
@@ -1345,13 +1361,23 @@ namespace
 	}
 	// Molag Bal himself when Vigilant is installed (its Coldharbour boss, no scripts on it); else our Dremora avatar
 	RE::TESNPC* BalVigilantBoss() { return RE::TESDataHandler::GetSingleton()->LookupForm<RE::TESNPC>(0x08DE94, "Vigilant.esm"); }
-	bool        IsBalAvatar(RE::TESNPC* a_base)
+	bool IsBalAvatar(RE::Actor* a)
 	{
-		return a_base && (a_base->GetFormID() == Own(PoolData::kBalAvatar) || (BalVigilantBoss() && a_base == BalVigilantBoss()));
+		if (!a) {
+			return false;
+		}
+		auto base = a->GetActorBase();
+		return a->GetFormID() == g_balx.lastSpawn || a->GetFormID() == g_balx.champRef || (base && base->GetFormID() == Own(PoolData::kBalAvatar));
 	}
-	RE::TESObjectREFR* SpawnAvatar(RE::TESObjectREFR* a_at, float a_dx, float a_dy, float a_scale)
+	// the Vigilant's own Molag Bal, met in Coldharbour (not one we placed)
+	bool IsVigilantMolagBal(RE::Actor* a)
 	{
-		RE::TESNPC* npc = BalVigilantBoss();
+		auto boss = BalVigilantBoss();
+		return a && boss && a->GetActorBase() == boss && !IsBalAvatar(a);
+	}
+	RE::TESObjectREFR* SpawnAvatar(RE::TESObjectREFR* a_at, float a_dx, float a_dy, float a_scale, bool a_dremora = false)
+	{
+		RE::TESNPC* npc = a_dremora ? nullptr : BalVigilantBoss();
 		if (npc) {
 			a_scale = 1.0f;  // the boss is already tall
 		} else {
@@ -1365,6 +1391,7 @@ namespace
 			return nullptr;
 		}
 		RE::TESObjectREFR* r = ref.get();
+		g_balx.lastSpawn = r->GetFormID();
 		CallMethod(r, "ObjectReference", "MoveTo", nullptr, a_at, a_dx, a_dy, 0.0f, true);
 		CallMethod(r, "ObjectReference", "SetScale", nullptr, a_scale);
 		CallMethod(r, "Actor", "StartCombat", nullptr, static_cast<RE::Actor*>(RE::PlayerCharacter::GetSingleton()));
@@ -1484,14 +1511,115 @@ namespace
 			});
 		}
 	}
-	void BalEnd()
+	void          BalCure();
+	bool          HasVigilant();
+	std::uint16_t VigilantDoneMask();
+	void          BalEnd()
 	{
+		if (g_balx.relapsed) {  // second ritual (no Vigilant installed): the root goes too
+			BalCure();
+			return;
+		}
+		g_balx.dormantAt = GameDays();
+		g_balx.vigMask = HasVigilant() ? VigilantDoneMask() : 0;
 		g_bal.dormant = 1;
 		g_bal.final = 0;
 		BalWear(0, false);
 		BalStage(60);
 		BalObjective(50, true);
 		Notify("胎に繋がれた鎖が砕けた。紋様がゆっくりと消えていく……");
+	}
+
+	// Vigilant main quests: the Skyrim chapters, Children of Oblivion, Coldharbour
+	constexpr RE::FormID kVigQuests[] = { 0x005CE2, 0x005CE3, 0x006271, 0x00627F, 0x0082EA, 0x0098C9, 0x009E68, 0x00A3FE,
+		0x00EA8A, 0x00EFF7, 0x011B75, 0x065932, 0x12F24E, 0x1363DB, 0x08F2F4 };
+	std::uint16_t VigilantDoneMask()
+	{
+		std::uint16_t m = 0;
+		auto          dh = RE::TESDataHandler::GetSingleton();
+		for (std::size_t i = 0; i < std::size(kVigQuests); ++i) {
+			auto q = dh->LookupForm<RE::TESQuest>(kVigQuests[i], "Vigilant.esm");
+			if (q && q->IsCompleted()) {
+				m |= static_cast<std::uint16_t>(1u << i);
+			}
+		}
+		return m;
+	}
+	bool HasVigilant() { return RE::TESDataHandler::GetSingleton()->LookupModByName("Vigilant.esm") != nullptr; }
+
+	void BalCure()
+	{
+		g_balx.cured = 1;
+		g_balx.relapsed = 0;
+		g_bal.dormant = 1;
+		g_bal.final = 0;
+		BalWear(0, false);
+		BalStage(100);
+		BalObjective(70, true);
+		BalObjective(80, true);
+		BalObjective(50, true);
+		if (auto q = BalQuest()) {
+			CallMethod(q, "Quest", "CompleteQuest", nullptr);
+		}
+		Fade(2.5f);
+		Notify("錨は根ごと砕けた。胎は、もう誰のものでもない");
+	}
+
+	void BalCurseFx(bool a_full);
+	void BalRelapse(const char* a_why)
+	{
+		if (!g_bal.dormant || g_balx.cured || g_balx.dark || g_balx.dormantAt <= 0.0) {
+			return;
+		}
+		Log("bal: relapse ({})", a_why);
+		g_bal.dormant = 0;
+		g_balx.relapsed = 1;
+		g_balx.vigMask = VigilantDoneMask();
+		const double rate = g_bal.slow ? 0.5 : 1.0;
+		g_bal.start = GameDays() - std::max(0.5f, g_settings.markDays) / rate;  // back at stage 2
+		g_balShown = -1;
+		BalStage(70);
+		BalObjective(70, false);
+		Notify(a_why);
+		BalCurseFx(false);
+	}
+
+	void BalDark()
+	{
+		g_balx.dark = 1;
+		g_bal.slow = 0;
+		g_bal.start = GameDays() - 10.0 * std::max(0.5f, g_settings.markDays);  // stays complete
+		BalStage(200);
+		if (auto q = BalQuest()) {
+			CallMethod(q, "Quest", "CompleteQuest", nullptr);
+		}
+		Blush(40.0f);
+		BalCurseFx(false);
+		Notify("「よかろう。お前の胎は、永遠に我が主のものだ」");
+	}
+
+	void BalChampion()
+	{
+		auto msg = RE::TESForm::LookupByID(Own(PoolData::kBalChampionMsg));
+		if (!msg) {
+			return;
+		}
+		g_balx.nextChamp = GameDays() + 1.0;  // not again while the box is up
+		CallMethod(msg, "Message", "Show",
+			[](const RE::BSScript::Variable& v) {
+				const int pick = v.IsInt() ? v.GetSInt() : 0;
+				if (pick == 1) {
+					BalDark();
+					return;
+				}
+				auto pc = RE::PlayerCharacter::GetSingleton();
+				if (auto r = SpawnAvatar(pc, 0.0f, 500.0f, 1.2f, true)) {
+					g_balx.champRef = r->GetFormID();
+					r->SetDisplayName("モラグ・バルの勇者", true);
+				}
+				g_balx.nextChamp = GameDays() + 5.0;
+			},
+			0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
 	}
 	// every poll: the first avatar at the altar, the mark's stage and glow
 	void CheckBal()
@@ -1511,12 +1639,76 @@ namespace
 				}
 			}
 		}
+		const float now = GameDays();
+		// failure route: DA10 failed -> nightmare a couple of days later (see the sleep sink)
+		if (!g_bal.spawned && g_bal.start <= 0.0 && g_balx.failDay <= 0.0) {
+			auto da10 = RE::TESDataHandler::GetSingleton()->LookupForm<RE::TESQuest>(0x22F08, "Skyrim.esm");
+			if (da10 && da10->GetCurrentStageID() >= 500) {
+				g_balx.failDay = now;
+				Log("bal: DA10 failed, nightmare pending");
+			}
+		}
+		if (g_bal.dormant && g_bal.start > 0.0 && g_balx.dormantAt <= 0.0 && !g_balx.cured && !g_balx.dark) {
+			g_balx.dormantAt = now;  // a 0.8 save, lifted before this version
+			g_balx.vigMask = HasVigilant() ? VigilantDoneMask() : 0;
+		}
+		// the sleeping anchor wakes
+		if (g_bal.dormant && !g_balx.cured && !g_balx.dark && g_balx.dormantAt > 0.0) {
+			static auto sanguinare = RE::TESDataHandler::GetSingleton()->LookupForm<RE::SpellItem>(0x0B8780, "Skyrim.esm");
+			if (sanguinare && pc->HasSpell(sanguinare)) {
+				BalRelapse("噛まれた首筋から、下腹部へ冷たい疼きが走る。紋様が戻ってきた……");
+				return;
+			}
+			if (now - g_balx.dormantAt >= 30.0f) {
+				Fade(2.0f);
+				BalRelapse("夢の中で囁きが聞こえた。「まだ終わっていない」……目覚めると、紋様が戻っていた");
+				return;
+			}
+			if (HasVigilant() && (VigilantDoneMask() & ~g_balx.vigMask)) {
+				BalRelapse("モラグ・バルの手下と戦ううちに、下腹部が疼き始めた。紋様が戻ってきた……");
+				return;
+			}
+			CycleState([](int c) {
+				if (c >= 4 && c <= 7) {
+					BalRelapse("身ごもった瞬間、下腹部に紋様が浮かび上がった……");
+				}
+			});
+		} else if (g_bal.dormant) {
+			g_balx.vigMask = HasVigilant() ? VigilantDoneMask() : 0;  // baseline while asleep
+		}
 		const int st = BalCurseStage();
 		if (st == 0) {
 			if (g_balShown > 0) {
 				BalWear(0, false);
 			}
 			return;
+		}
+		// the Vigilant's road: each main quest done thins the mark; Coldharbour wakes it
+		if (g_balx.relapsed && g_bal.qstage == 80) {
+			const std::uint16_t m = VigilantDoneMask();
+			if (const std::uint16_t fresh = m & ~g_balx.vigMask) {
+				g_balx.vigMask = m;
+				const double rate = g_bal.slow ? 0.5 : 1.0;
+				g_bal.start = std::min(static_cast<double>(now), g_bal.start + 0.5 * std::max(0.5f, g_settings.markDays) / rate);
+				Notify("警戒者として戦うたび、紋様が少し薄くなる");
+			}
+			auto ch = RE::TESDataHandler::GetSingleton()->LookupForm<RE::TESQuest>(0x12F24E, "Vigilant.esm");
+			if (!g_balx.chSeen && ch && (ch->IsRunning() || ch->IsCompleted())) {
+				g_balx.chSeen = 1;
+				BalWear(st, true);
+				Blush(25.0f);
+				Notify("コールドハーバーの空気に、紋様が強く光って応えた……");
+			}
+		}
+		// the champion comes for a complete mark
+		if (st == 4 && !g_balx.dark && !g_bal.final) {
+			if (g_balx.stage4Since <= 0.0) {
+				g_balx.stage4Since = now;
+			} else if (now - g_balx.stage4Since >= 7.0 && now >= g_balx.nextChamp && !pc->IsInCombat()) {
+				BalChampion();
+			}
+		} else if (st < 4) {
+			g_balx.stage4Since = 0.0;
 		}
 		CycleState([st](int cycle) {
 			const bool glow = cycle == 1;
@@ -1708,6 +1900,28 @@ namespace
 	}
 
 	// where live eggs come from: an egg sac's harvest, a chaurus the player kills
+	// failure route: a nightmare after DA10 failed
+	class BalSleepSink : public RE::BSTEventSink<RE::TESSleepStopEvent>
+	{
+	public:
+		RE::BSEventNotifyControl ProcessEvent(const RE::TESSleepStopEvent*, RE::BSTEventSource<RE::TESSleepStopEvent>*) override
+		{
+			SKSE::GetTaskInterface()->AddTask([] {
+				if (g_bal.spawned || g_bal.start > 0.0 || g_balx.failDay <= 0.0 || GameDays() - g_balx.failDay < 2.0f) {
+					return;
+				}
+				g_bal.spawned = 1;
+				Fade(2.5f);
+				Notify("眠りの中で、冷たい鎖の音がした。「逃げられると思ったか」");
+				Later(2.0f, [] {
+					SpawnAvatar(RE::PlayerCharacter::GetSingleton(), 0.0f, 350.0f, 1.3f);
+				});
+			});
+			return RE::BSEventNotifyControl::kContinue;
+		}
+	};
+	BalSleepSink g_balSleep;
+
 	class EggSourceSink : public RE::BSTEventSink<RE::TESContainerChangedEvent>, public RE::BSTEventSink<RE::TESDeathEvent>
 	{
 	public:
@@ -1741,7 +1955,17 @@ namespace
 			const RE::FormID who = a_event->actorDying->GetFormID();
 			SKSE::GetTaskInterface()->AddTask([who] {
 				auto a = RE::TESForm::LookupByID<RE::Actor>(who);
-				if (a && IsBalAvatar(a->GetActorBase())) {
+				if (a && IsVigilantMolagBal(a) && g_bal.qstage >= 70 && g_bal.qstage < 100) {
+					BalCure();
+					return;
+				}
+				if (a && a->GetFormID() == g_balx.champRef && g_balx.champRef) {
+					g_balx.champRef = 0;
+					g_balx.nextChamp = GameDays() + 5.0;
+					Notify("勇者は黒い煙になって消えた。「また来る……」");
+					return;
+				}
+				if (a && IsBalAvatar(a)) {
 					if (g_bal.final) {
 						BalEnd();
 					} else if (g_bal.start <= 0.0) {
@@ -1951,6 +2175,18 @@ namespace
 				return RE::BSEventNotifyControl::kContinue;
 			} else if (info == Own(PoolData::kBalMara)) {
 				Later(1.0f, [] { BalTrial(2, 42); });
+				return RE::BSEventNotifyControl::kContinue;
+			} else if (info == Own(PoolData::kBalRelapse)) {
+				BalObjective(70, true);
+				if (HasVigilant()) {
+					g_balx.vigMask = VigilantDoneMask();
+					BalStage(80);
+					BalObjective(80, false);
+				} else {  // no Coldharbour to go to: a second, stronger ritual takes the root
+					BalStage(50);
+					BalObjective(50, false);
+					Notify("警戒者は、もう一度最後の儀式を行うと言った");
+				}
 				return RE::BSEventNotifyControl::kContinue;
 			} else if (info == Own(PoolData::kBalRitual)) {
 				Fade(3.0f);
@@ -2348,6 +2584,9 @@ namespace
 		if (a_ser->OpenRecord(kSerBal, 1)) {
 			a_ser->WriteRecordData(g_bal);
 		}
+		if (a_ser->OpenRecord('BALX', 1)) {
+			a_ser->WriteRecordData(g_balx);
+		}
 		if (!a_ser->OpenRecord(kSerDna, 1)) {
 			return;
 		}
@@ -2391,6 +2630,7 @@ namespace
 		g_eggStart = g_eggDue = 0.0;
 		g_eggMorph = -1.0f;
 		g_bal = BalState{};
+		g_balx = BalExtra{};
 		g_balShown = -1;
 		for (auto& d : g_dna) {
 			if (d.tier) {
@@ -2421,6 +2661,14 @@ namespace
 			}
 			if (type == kSerBal) {
 				a_ser->ReadRecordData(g_bal);
+				continue;
+			}
+			if (type == 'BALX') {
+				a_ser->ReadRecordData(g_balx);
+				for (RE::FormID* id : { &g_balx.lastSpawn, &g_balx.champRef }) {
+					RE::FormID n = 0;
+					*id = (*id && a_ser->ResolveFormID(*id, n)) ? n : 0;
+				}
 				continue;
 			}
 			if (type == kSerEggs) {
@@ -2540,6 +2788,7 @@ namespace
 				holder->AddEventSink<RE::TESTopicInfoEvent>(&g_topic);
 				holder->AddEventSink<RE::TESContainerChangedEvent>(&g_eggSources);
 				holder->AddEventSink<RE::TESDeathEvent>(&g_eggSources);
+				holder->AddEventSink<RE::TESSleepStopEvent>(&g_balSleep);
 			}
 			if (auto idm = RE::BSInputDeviceManager::GetSingleton()) {
 				idm->AddEventSink(&g_input);

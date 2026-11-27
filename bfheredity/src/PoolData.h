@@ -81,5 +81,7 @@ inline constexpr std::uint32_t kBalVigil = 0x906;
 inline constexpr std::uint32_t kBalDibella = 0x909;
 inline constexpr std::uint32_t kBalMara = 0x90C;
 inline constexpr std::uint32_t kBalRitual = 0x90F;
+inline constexpr std::uint32_t kBalRelapse = 0x912;
+inline constexpr std::uint32_t kBalChampionMsg = 0x913;
 inline constexpr std::uint32_t kTellInfos[] = {0x8F5, 0x8F6, 0x8F7, 0x8F8};
 }
