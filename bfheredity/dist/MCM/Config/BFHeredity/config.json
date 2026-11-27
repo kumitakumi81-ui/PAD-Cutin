@@ -92,6 +92,15 @@
           }
         },
         {
+          "id": "bUseOCum:DNA",
+          "text": "OCum Ascended と連動",
+          "type": "toggle",
+          "help": "採取の濃さを OCum の蓄積量で決め、採取後は空になる。挿入後に OCum の見た目を付ける",
+          "valueOptions": {
+            "sourceType": "ModSettingBool"
+          }
+        },
+        {
           "type": "header",
           "text": "妊娠のしくみ"
         },
