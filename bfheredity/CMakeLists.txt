@@ -1,7 +1,7 @@
 # BF Heredity - Beeing Female NG children inherit both parents' looks, and keep the name you give them
 # SPDX-License-Identifier: GPL-3.0-or-later
 cmake_minimum_required(VERSION 3.21)
-project(BFHeredity VERSION 0.11.1 LANGUAGES CXX)
+project(BFHeredity VERSION 0.12.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -22,7 +22,7 @@ if(NOT COMMAND add_commonlibsse_plugin)
     include("${BFH_COMMONLIB_DIR}/cmake/CommonLibSSE.cmake")
 endif()
 
-add_commonlibsse_plugin(${PROJECT_NAME} NAME "BFHeredity" AUTHOR "Kaku" VERSION ${PROJECT_VERSION} SOURCES src/main.cpp src/Video.cpp)
+add_commonlibsse_plugin(${PROJECT_NAME} NAME "BFHeredity" AUTHOR "Kaku" VERSION ${PROJECT_VERSION} SOURCES src/main.cpp src/Video.cpp src/Orb.cpp)
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_23)
 target_compile_options(${PROJECT_NAME} PRIVATE /Zc:preprocessor /permissive- /EHsc /utf-8 /W3)
 target_compile_definitions(${PROJECT_NAME} PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE BFH_VERSION_STRING="${PROJECT_VERSION}")
