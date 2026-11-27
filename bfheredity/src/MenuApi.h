@@ -298,4 +298,12 @@ namespace KKMenu
 			f(a_list, a_pts, a_n, a_col);
 		}
 	}
+
+	inline void AddImageUV(void* a_list, void* a_tex, ImVec2 a_min, ImVec2 a_max, ImVec2 a_uv0, ImVec2 a_uv1, std::uint32_t a_col)
+	{
+		static auto f = Fn<void (*)(void*, void*, const ImVec2, const ImVec2, const ImVec2, const ImVec2, std::uint32_t)>("ImDrawList_AddImage");
+		if (f && a_list && a_tex) {
+			f(a_list, a_tex, a_min, a_max, a_uv0, a_uv1, a_col);
+		}
+	}
 }

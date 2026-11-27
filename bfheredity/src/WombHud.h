@@ -13,7 +13,35 @@ namespace Womb
 		float       arousal = 0.0f;  // 0-100
 		std::string father;          // whose child
 		std::string donor;           // the latest donor
+		int         donors[6]{};     // race look of the donors still inside (Womb::Race)
+		int         donorN = 0;
 	};
+	// how their seed looks in the HUD
+	enum Race
+	{
+		kHuman, kOrc, kElf, kKhajiit, kArgonian, kVampire, kDaedra, kBeast
+	};
+	struct Look
+	{
+		int   r, g, b;
+		float head, tail, wiggle, glow;
+		const char* name;
+	};
+	inline const Look& LookOf(int a_race)
+	{
+		static const Look k[] = {
+			{ 255, 255, 255, 2.2f, 9.0f, 9.0f, 0.0f, "人" },
+			{ 110, 225, 140, 3.0f, 8.0f, 12.0f, 0.25f, "オーク" },
+			{ 255, 236, 170, 1.8f, 12.0f, 7.0f, 0.35f, "エルフ" },
+			{ 255, 180, 90, 2.4f, 10.0f, 10.0f, 0.15f, "カジート" },
+			{ 90, 225, 205, 2.2f, 11.0f, 5.0f, 0.2f, "アルゴニアン" },
+			{ 225, 40, 70, 2.2f, 9.0f, 8.0f, 0.4f, "吸血鬼" },
+			{ 190, 95, 255, 2.6f, 9.0f, 11.0f, 0.5f, "デイドラ" },
+			{ 205, 175, 140, 3.2f, 10.0f, 13.0f, 0.1f, "獣" },
+		};
+		return k[std::clamp(a_race, 0, 7)];
+	}
+	inline std::atomic<bool> g_flashReq{ false };
 
 	inline std::mutex g_lock;
 	inline Data       g_data;
@@ -110,6 +138,36 @@ namespace Womb
 		}
 	}
 
+
+	// seed swimming in from the rim toward the egg, each in its donor's colours
+	inline void DrawSperm(void* dl, const Data& d, KKMenu::ImVec2 c, float rOut, float rIn, float s, float t)
+	{
+		const int n = std::min(16, 5 + d.sperm * 3);
+		for (int i = 0; i < n; ++i) {
+			const Look& L = LookOf(d.donorN ? d.donors[i % d.donorN] : kHuman);
+			const float a0 = i * 2.39996f;
+			const float ph = std::fmod(t * 0.16f + i * 0.137f, 1.0f);
+			const float dist = rIn + (rOut - rIn) * (1.0f - ph);
+			const float a = a0 + 0.35f * std::sin(t * 1.3f + i) * (1.0f - ph);
+			const float dx = -std::cos(a), dy = -std::sin(a);  // heading inward
+			const float fade = std::sin(3.14159f * ph);
+			const auto  head = V(c.x + std::cos(a) * dist, c.y + std::sin(a) * dist);
+			const int   seg = 6;
+			KKMenu::ImVec2 prev = head;
+			for (int j = 1; j <= seg; ++j) {
+				const float k = static_cast<float>(j) / seg;
+				const float w = std::sin(t * L.wiggle + i * 2.1f + k * 5.0f) * 3.2f * s * k;
+				const auto  p = V(head.x - dx * L.tail * s * k * 1.3f - dy * w, head.y - dy * L.tail * s * k * 1.3f + dx * w);
+				KKMenu::AddLine(dl, prev, p, Col(L.r, L.g, L.b, 0.55f * fade * (1.0f - k * 0.5f)), (1.4f - 0.6f * k) * s);
+				prev = p;
+			}
+			if (L.glow > 0) {
+				KKMenu::AddCircleFilled(dl, head, L.head * 2.6f * s, Col(L.r, L.g, L.b, L.glow * 0.5f * fade), 10);
+			}
+			KKMenu::AddCircleFilled(dl, head, L.head * s, Col(L.r, L.g, L.b, 0.95f * fade), 10);
+		}
+	}
+
 	inline void Draw(void* dl, KKMenu::ImVec2 vp, float dt, float t)
 	{
 		Data d;
@@ -118,7 +176,7 @@ namespace Womb
 			d = g_data;
 		}
 		const float s = 1.15f * g_scale * vp.y / 1080.0f;
-		const float w = 300.0f * s, h = 240.0f * s, pad = 24.0f * s;
+		const float w = 330.0f * s, h = 240.0f * s, pad = 24.0f * s;
 		const float x0 = (g_corner & 1) ? vp.x - w - pad : pad;
 		const float y0 = (g_corner & 2) ? pad + 40.0f * s : vp.y - h - pad - 90.0f * s;
 		const float pulse = 0.5f + 0.5f * std::sin(t * (2.0f + d.arousal / 40.0f));
@@ -134,76 +192,97 @@ namespace Womb
 		const bool           preg = d.state >= 4 && d.state <= 7;
 		const float          grow = preg ? std::clamp(((d.state - 4) * 10.0f + d.daysIn) / 31.0f, 0.0f, 1.0f) : 0.0f;
 		const float          Rw = R * (1.0f + 0.45f * grow);
-		KKMenu::ImVec2       body[14];
-		for (int i = 0; i < 14; ++i) {  // pear: wide fundus up top, narrowing to the cervix
-			const float a = 3.14159f * 2.0f * i / 14.0f;
-			const float sx = std::cos(a), sy = std::sin(a);
-			const float narrow = sy > 0 ? 1.0f - 0.55f * sy : 1.0f;
-			body[i] = V(c.x + sx * Rw * 0.95f * narrow, c.y + sy * Rw * (sy > 0 ? 1.25f : 0.8f));
+		// the womb: an AI-painted orb (Data/BFHeredity/Orb) when present, else the drawn uterus
+		const float          prog = std::clamp(d.daysIn / Length(d.state), 0.0f, 1.0f);
+		static float         s_flashT = -100.0f;
+		if (g_flashReq.exchange(false)) {
+			s_flashT = t;
 		}
-		const float glow = 0.35f + 0.35f * heat + (d.state == 1 ? 0.2f * pulse : 0.0f);
-		const auto  wallCol = d.state == 3 ? Col(190, 40, 60, 0.75f) : Col(235, 120, 165, 0.55f + 0.25f * glow);
-		KKMenu::AddCircleFilled(dl, c, Rw * 1.5f, Col(255, 90, 160, 0.08f + 0.12f * heat * pulse), 40);  // warmth
-		KKMenu::AddConvexPolyFilled(dl, body, 14, wallCol);
-		// inner cavity
-		KKMenu::ImVec2 cav[12];
-		for (int i = 0; i < 12; ++i) {
-			const float a = 3.14159f * 2.0f * i / 12.0f;
-			const float sx = std::cos(a), sy = std::sin(a);
-			const float narrow = sy > 0 ? 1.0f - 0.7f * sy : 1.0f;
-			cav[i] = V(c.x + sx * Rw * 0.62f * narrow, c.y - 4.0f * s + sy * Rw * (sy > 0 ? 0.95f : 0.5f));
+		const char* orbName = d.state == 3 ? "menses" : (d.state >= 5 && d.state <= 7) ? "preg" : d.state == 4 ? (d.daysIn < 3.0f ? "morula" : "implant") : "egg";
+		const float orbD = 178.0f * s;
+		bool        orbOk = false;
+		if (t - s_flashT < Orb::Length("flash")) {
+			orbOk = Orb::Draw(dl, "flash", c.x, c.y, orbD, t - s_flashT, 1.0f, false);
+		} else {
+			orbOk = Orb::Draw(dl, orbName, c.x, c.y, orbD, t, d.state == 8 || d.state == 2 ? 0.75f : 1.0f);
 		}
-		KKMenu::AddConvexPolyFilled(dl, cav, 12, d.state == 3 ? Col(120, 10, 25, 0.8f) : Col(120, 30, 70, 0.75f));
-		// tubes and ovaries
-		const KKMenu::ImVec2 tl = V(c.x - Rw * 0.8f, c.y - Rw * 0.55f), tr = V(c.x + Rw * 0.8f, c.y - Rw * 0.55f);
-		const KKMenu::ImVec2 ol = V(c.x - Rw * 1.75f, c.y - Rw * 0.1f), orr = V(c.x + Rw * 1.75f, c.y - Rw * 0.1f);
-		const KKMenu::ImVec2 l1 = V(c.x - Rw * 1.3f, c.y - Rw * 1.2f), l2 = V(c.x - Rw * 1.9f, c.y - Rw * 0.9f);
-		KKMenu::AddBezierCubic(dl, tl, l1, l2, ol, Col(235, 120, 165, 0.8f), 4.0f * s);
-		KKMenu::AddBezierCubic(dl, tr, V(c.x + Rw * 1.3f, c.y - Rw * 1.2f), V(c.x + Rw * 1.9f, c.y - Rw * 0.9f), orr, Col(235, 120, 165, 0.8f), 4.0f * s);
-		KKMenu::AddCircleFilled(dl, ol, 10.0f * s, Col(245, 170, 200, 0.9f));
-		KKMenu::AddCircleFilled(dl, orr, 10.0f * s, Col(245, 170, 200, 0.9f));
-
-		const float prog = std::clamp(d.daysIn / Length(d.state), 0.0f, 1.0f);
-		// the egg
-		KKMenu::ImVec2 egg = ol;
-		bool           showEgg = false;
-		if (d.state == 0) {  // a follicle swelling on the ovary
-			KKMenu::AddCircleFilled(dl, V(ol.x, ol.y - 4.0f * s), (3.0f + 6.0f * prog) * s, Col(255, 230, 180, 0.6f + 0.3f * prog));
-		} else if (d.state == 1) {  // released, drifting down the tube
-			egg = Bez(ol, l2, l1, tl, std::min(1.0f, prog * 1.1f));
-			showEgg = true;
-		} else if (d.state == 2) {
-			egg = V(c.x, c.y - Rw * 0.2f);
-			showEgg = prog < 0.5f;
-		}
-		if (showEgg) {
-			KKMenu::AddCircleFilled(dl, egg, (12.0f + 4.0f * pulse) * s, Col(255, 220, 140, 0.18f));
-			KKMenu::AddCircleFilled(dl, egg, 6.0f * s, Col(255, 236, 190, 0.95f));
-		}
-		// sperm swimming up from the cervix toward the egg (or the fundus)
-		if (d.sperm > 0 && d.state < 4) {
-			const int            n = std::min(14, 4 + d.sperm * 3);
-			const KKMenu::ImVec2 cx = V(c.x, c.y + Rw * 1.15f);
-			const KKMenu::ImVec2 goal = showEgg ? egg : V(c.x, c.y - Rw * 0.35f);
-			for (int i = 0; i < n; ++i) {
-				const float ph = std::fmod(t * 0.18f + i * 0.137f, 1.0f);
-				const float wig = std::sin(t * 9.0f + i * 2.1f) * 5.0f * s * (1.0f - ph);
-				const float ox = (std::fmod(i * 0.618f, 1.0f) - 0.5f) * 30.0f * s * (1.0f - ph);
-				const auto  p = V(cx.x + (goal.x - cx.x) * ph + wig + ox, cx.y + (goal.y - cx.y) * ph);
-				const float dx = (goal.x - cx.x), dy = (goal.y - cx.y), dl2 = std::sqrt(dx * dx + dy * dy) + 1e-3f;
-				KKMenu::AddLine(dl, p, V(p.x - dx / dl2 * 9.0f * s - wig * 0.6f, p.y - dy / dl2 * 9.0f * s), Col(255, 255, 255, 0.55f), 1.2f * s);
-				KKMenu::AddCircleFilled(dl, p, 2.2f * s, Col(255, 255, 255, 0.85f), 8);
+		if (orbOk) {
+			KKMenu::AddCircleFilled(dl, c, orbD * 0.62f, Col(255, 90, 160, 0.05f + 0.10f * heat * pulse), 40);  // warmth
+			if (d.sperm > 0 && d.state < 4 && t - s_flashT >= Orb::Length("flash")) {
+				DrawSperm(dl, d, c, orbD * 0.47f, orbD * 0.12f, s, t);
 			}
-		}
-		// the child
-		if (preg) {
-			const auto  fc = V(c.x, c.y - Rw * 0.05f);
-			const float fr = (5.0f + 30.0f * grow) * s;
-			const float beat = std::pow(std::max(0.0f, std::sin(t * 7.5f)), 8.0f);
-			KKMenu::AddCircleFilled(dl, fc, fr * 1.5f, Col(255, 200, 220, 0.18f + 0.12f * beat));
-			KKMenu::AddCircleFilled(dl, fc, fr, Col(255, 210, 200, 0.85f));
-			KKMenu::AddCircleFilled(dl, V(fc.x + fr * 0.35f, fc.y - fr * 0.45f), fr * 0.45f, Col(255, 220, 210, 0.9f));
-			KKMenu::AddCircleFilled(dl, V(fc.x - fr * 0.2f, fc.y + fr * 0.1f), fr * 0.12f + 1.5f * s, Col(255, 80, 120, 0.4f + 0.6f * beat));  // heart
+		} else {
+			KKMenu::ImVec2       body[14];
+			for (int i = 0; i < 14; ++i) {  // pear: wide fundus up top, narrowing to the cervix
+				const float a = 3.14159f * 2.0f * i / 14.0f;
+				const float sx = std::cos(a), sy = std::sin(a);
+				const float narrow = sy > 0 ? 1.0f - 0.55f * sy : 1.0f;
+				body[i] = V(c.x + sx * Rw * 0.95f * narrow, c.y + sy * Rw * (sy > 0 ? 1.25f : 0.8f));
+			}
+			const float glow = 0.35f + 0.35f * heat + (d.state == 1 ? 0.2f * pulse : 0.0f);
+			const auto  wallCol = d.state == 3 ? Col(190, 40, 60, 0.75f) : Col(235, 120, 165, 0.55f + 0.25f * glow);
+			KKMenu::AddCircleFilled(dl, c, Rw * 1.5f, Col(255, 90, 160, 0.08f + 0.12f * heat * pulse), 40);  // warmth
+			KKMenu::AddConvexPolyFilled(dl, body, 14, wallCol);
+			// inner cavity
+			KKMenu::ImVec2 cav[12];
+			for (int i = 0; i < 12; ++i) {
+				const float a = 3.14159f * 2.0f * i / 12.0f;
+				const float sx = std::cos(a), sy = std::sin(a);
+				const float narrow = sy > 0 ? 1.0f - 0.7f * sy : 1.0f;
+				cav[i] = V(c.x + sx * Rw * 0.62f * narrow, c.y - 4.0f * s + sy * Rw * (sy > 0 ? 0.95f : 0.5f));
+			}
+			KKMenu::AddConvexPolyFilled(dl, cav, 12, d.state == 3 ? Col(120, 10, 25, 0.8f) : Col(120, 30, 70, 0.75f));
+			// tubes and ovaries
+			const KKMenu::ImVec2 tl = V(c.x - Rw * 0.8f, c.y - Rw * 0.55f), tr = V(c.x + Rw * 0.8f, c.y - Rw * 0.55f);
+			const KKMenu::ImVec2 ol = V(c.x - Rw * 1.75f, c.y - Rw * 0.1f), orr = V(c.x + Rw * 1.75f, c.y - Rw * 0.1f);
+			const KKMenu::ImVec2 l1 = V(c.x - Rw * 1.3f, c.y - Rw * 1.2f), l2 = V(c.x - Rw * 1.9f, c.y - Rw * 0.9f);
+			KKMenu::AddBezierCubic(dl, tl, l1, l2, ol, Col(235, 120, 165, 0.8f), 4.0f * s);
+			KKMenu::AddBezierCubic(dl, tr, V(c.x + Rw * 1.3f, c.y - Rw * 1.2f), V(c.x + Rw * 1.9f, c.y - Rw * 0.9f), orr, Col(235, 120, 165, 0.8f), 4.0f * s);
+			KKMenu::AddCircleFilled(dl, ol, 10.0f * s, Col(245, 170, 200, 0.9f));
+			KKMenu::AddCircleFilled(dl, orr, 10.0f * s, Col(245, 170, 200, 0.9f));
+
+				// the egg
+			KKMenu::ImVec2 egg = ol;
+			bool           showEgg = false;
+			if (d.state == 0) {  // a follicle swelling on the ovary
+				KKMenu::AddCircleFilled(dl, V(ol.x, ol.y - 4.0f * s), (3.0f + 6.0f * prog) * s, Col(255, 230, 180, 0.6f + 0.3f * prog));
+			} else if (d.state == 1) {  // released, drifting down the tube
+				egg = Bez(ol, l2, l1, tl, std::min(1.0f, prog * 1.1f));
+				showEgg = true;
+			} else if (d.state == 2) {
+				egg = V(c.x, c.y - Rw * 0.2f);
+				showEgg = prog < 0.5f;
+			}
+			if (showEgg) {
+				KKMenu::AddCircleFilled(dl, egg, (12.0f + 4.0f * pulse) * s, Col(255, 220, 140, 0.18f));
+				KKMenu::AddCircleFilled(dl, egg, 6.0f * s, Col(255, 236, 190, 0.95f));
+			}
+			// sperm swimming up from the cervix toward the egg (or the fundus)
+			if (d.sperm > 0 && d.state < 4) {
+				const int            n = std::min(14, 4 + d.sperm * 3);
+				const KKMenu::ImVec2 cx = V(c.x, c.y + Rw * 1.15f);
+				const KKMenu::ImVec2 goal = showEgg ? egg : V(c.x, c.y - Rw * 0.35f);
+				for (int i = 0; i < n; ++i) {
+					const float ph = std::fmod(t * 0.18f + i * 0.137f, 1.0f);
+					const float wig = std::sin(t * 9.0f + i * 2.1f) * 5.0f * s * (1.0f - ph);
+					const float ox = (std::fmod(i * 0.618f, 1.0f) - 0.5f) * 30.0f * s * (1.0f - ph);
+					const auto  p = V(cx.x + (goal.x - cx.x) * ph + wig + ox, cx.y + (goal.y - cx.y) * ph);
+					const float dx = (goal.x - cx.x), dy = (goal.y - cx.y), dl2 = std::sqrt(dx * dx + dy * dy) + 1e-3f;
+					KKMenu::AddLine(dl, p, V(p.x - dx / dl2 * 9.0f * s - wig * 0.6f, p.y - dy / dl2 * 9.0f * s), Col(255, 255, 255, 0.55f), 1.2f * s);
+					KKMenu::AddCircleFilled(dl, p, 2.2f * s, Col(255, 255, 255, 0.85f), 8);
+				}
+			}
+			// the child
+			if (preg) {
+				const auto  fc = V(c.x, c.y - Rw * 0.05f);
+				const float fr = (5.0f + 30.0f * grow) * s;
+				const float beat = std::pow(std::max(0.0f, std::sin(t * 7.5f)), 8.0f);
+				KKMenu::AddCircleFilled(dl, fc, fr * 1.5f, Col(255, 200, 220, 0.18f + 0.12f * beat));
+				KKMenu::AddCircleFilled(dl, fc, fr, Col(255, 210, 200, 0.85f));
+				KKMenu::AddCircleFilled(dl, V(fc.x + fr * 0.35f, fc.y - fr * 0.45f), fr * 0.45f, Col(255, 220, 210, 0.9f));
+				KKMenu::AddCircleFilled(dl, V(fc.x - fr * 0.2f, fc.y + fr * 0.1f), fr * 0.12f + 1.5f * s, Col(255, 80, 120, 0.4f + 0.6f * beat));  // heart
+			}
+
 		}
 
 		// cycle ring around the womb
@@ -213,7 +292,7 @@ namespace Womb
 			for (int i : order) {
 				total += Length(i);
 			}
-			const float rr = Rw * 2.25f;
+			const float rr = orbOk ? orbD * 0.54f : Rw * 2.25f;
 			float       a0 = -3.14159f * 0.5f;
 			for (int i : order) {
 				const float span = 6.28318f * Length(i) / total;
@@ -233,7 +312,7 @@ namespace Womb
 		}
 
 		// words
-		const float tx = x0 + 205.0f * s;
+		const float tx = x0 + 215.0f * s;
 		char        buf[160];
 		KKMenu::AddText(dl, 22.0f * s, V(tx, y0 + 18.0f * s), Col(255, 190, 220, 0.95f), Name(d.state));
 		std::snprintf(buf, sizeof(buf), "%d日目", static_cast<int>(d.daysIn) + 1);

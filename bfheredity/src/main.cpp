@@ -284,6 +284,7 @@ namespace
 	}
 
 #include "Cutin.h"
+#include "Orb.h"
 #include "WombHud.h"
 
 	// whole body (body slot) -> face, the cut lasting about a_seconds
@@ -2819,6 +2820,7 @@ namespace
 			Womb::Push("排卵しました", "卵が、ゆっくりと降りてくる……", gold);
 			Blush(8.0f);
 		} else if (a_st == 4 && a_last <= 3) {
+			Womb::g_flashReq = true;
 			FatherName([pink](std::string n) { Womb::Push("受精しました", n.empty() ? "胎の奥で、ふたつがひとつになった" : n + "の子を、宿した", pink); });
 		} else if (a_st == 3) {
 			Womb::Push("月のものが来た", "今回は、授からなかった", red);
@@ -2829,6 +2831,42 @@ namespace
 		} else if (a_st == 8 && a_last == 7) {
 			Womb::Push("生まれた", "胎が、ゆっくりと元に戻っていく", gold);
 		}
+	}
+	int RaceLook(RE::Actor* a)
+	{
+		if (!a) {
+			return Womb::kHuman;
+		}
+		auto        race = a->GetRace();
+		const auto  id = race ? race->GetFormID() : 0;
+		const char* rn = race ? race->GetFullName() : "";
+		auto        kw = [a](RE::FormID f) {
+            auto k = RE::TESDataHandler::GetSingleton()->LookupForm<RE::BGSKeyword>(f, "Skyrim.esm");
+            return k && a->HasKeyword(k);
+		};
+		if (kw(0x013797)) {  // ActorTypeDaedra
+			return Womb::kDaedra;
+		}
+		if (kw(0x0A82BB)) {  // Vampire
+			return Womb::kVampire;
+		}
+		if (id == 0x013747 || id == 0x0A82B9 || std::strstr(rn, "Orc") || std::strstr(rn, "オーク")) {
+			return Womb::kOrc;
+		}
+		if (id == 0x013745 || id == 0x088845 || std::strstr(rn, "Khajiit") || std::strstr(rn, "カジート")) {
+			return Womb::kKhajiit;
+		}
+		if (id == 0x013740 || id == 0x08883A || std::strstr(rn, "Argonian") || std::strstr(rn, "アルゴニアン")) {
+			return Womb::kArgonian;
+		}
+		if (id == 0x013743 || id == 0x013749 || id == 0x013742 || id == 0x088840 || id == 0x088884 || id == 0x08883D || std::strstr(rn, "Elf") ||
+			std::strstr(rn, "エルフ") || std::strstr(rn, "アルトマー") || std::strstr(rn, "ボズマー") || std::strstr(rn, "ダンマー")) {
+			return Womb::kElf;
+		}
+		if (kw(0x013795) || kw(0x013798) || id == 0x0CDD84) {  // creatures, animals, werewolves
+			return Womb::kBeast;
+		}
+		return Womb::kHuman;
 	}
 	void UpdateWomb()
 	{
@@ -2853,6 +2891,20 @@ namespace
 				const int was = std::exchange(g_lastSperm, n);
 				if (n <= 0) {
 					return;
+				}
+				{
+					std::scoped_lock l(Womb::g_lock);
+					Womb::g_data.donorN = std::min(n, 6);
+				}
+				for (int i = 0; i < std::min(n, 6); ++i) {
+					CallStatic(
+						"StorageUtil", "FormListGet",
+						[i](const RE::BSScript::Variable& f) {
+							const int look = RaceLook(AsForm(f) ? AsForm(f)->As<RE::Actor>() : nullptr);
+							std::scoped_lock l(Womb::g_lock);
+							Womb::g_data.donors[i] = look;
+						},
+						pc, std::string("FW.SpermName"), static_cast<std::int32_t>(n - 1 - i));
 				}
 				CallStatic(
 					"StorageUtil", "FormListGet",
