@@ -1343,9 +1343,20 @@ namespace
 		CallStatic("SlaveTats", "synchronize_tattoos", nullptr, pc, true);
 		Log("bal: mark stage {} glow {}", a_stage, a_glow);
 	}
+	// Molag Bal himself when Vigilant is installed (its Coldharbour boss, no scripts on it); else our Dremora avatar
+	RE::TESNPC* BalVigilantBoss() { return RE::TESDataHandler::GetSingleton()->LookupForm<RE::TESNPC>(0x08DE94, "Vigilant.esm"); }
+	bool        IsBalAvatar(RE::TESNPC* a_base)
+	{
+		return a_base && (a_base->GetFormID() == Own(PoolData::kBalAvatar) || (BalVigilantBoss() && a_base == BalVigilantBoss()));
+	}
 	RE::TESObjectREFR* SpawnAvatar(RE::TESObjectREFR* a_at, float a_dx, float a_dy, float a_scale)
 	{
-		auto npc = RE::TESDataHandler::GetSingleton()->LookupForm<RE::TESNPC>(PoolData::kBalAvatar, kPlugin);
+		RE::TESNPC* npc = BalVigilantBoss();
+		if (npc) {
+			a_scale = 1.0f;  // the boss is already tall
+		} else {
+			npc = RE::TESDataHandler::GetSingleton()->LookupForm<RE::TESNPC>(PoolData::kBalAvatar, kPlugin);
+		}
 		if (!a_at || !npc) {
 			return nullptr;
 		}
@@ -1648,7 +1659,7 @@ namespace
 			const RE::FormID who = a_event->actorDying->GetFormID();
 			SKSE::GetTaskInterface()->AddTask([who] {
 				auto a = RE::TESForm::LookupByID<RE::Actor>(who);
-				if (a && a->GetActorBase() && a->GetActorBase()->GetFormID() == Own(PoolData::kBalAvatar)) {
+				if (a && IsBalAvatar(a->GetActorBase())) {
 					if (g_bal.final) {
 						BalEnd();
 					} else if (g_bal.start <= 0.0) {
