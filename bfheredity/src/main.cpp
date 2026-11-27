@@ -1374,6 +1374,36 @@ namespace
 
 	// the curse taking hold: she sinks to her knees, black smoke is drawn into her lower belly, the mark surfaces.
 	// a_full = first time (long); relapse uses the short one
+	// attach a vanilla art object to the lower belly so the effect converges there instead of on the whole body
+	void BellyArt(RE::FormID a_art, float a_seconds)
+	{
+		auto pc = RE::PlayerCharacter::GetSingleton();
+		auto art = RE::TESDataHandler::GetSingleton()->LookupForm<RE::BGSArtObject>(a_art, "Skyrim.esm");
+		auto root = pc ? pc->Get3D(false) : nullptr;
+		if (!art || !root) {
+			return;
+		}
+		RE::NiAVObject* node = root->GetObjectByName("NPC Belly");
+		if (!node) {
+			node = root->GetObjectByName("NPC Pelvis [Pelv]");
+		}
+		if (!node) {
+			node = root->GetObjectByName("NPC Spine [Spn0]");
+		}
+		pc->ApplyArtObject(art, a_seconds, nullptr, false, false, node, false);
+	}
+	// a short swell of the belly, as if something went in
+	void BellyPulse(float a_amount)
+	{
+		auto ref = static_cast<RE::TESObjectREFR*>(RE::PlayerCharacter::GetSingleton());
+		CallStatic("NiOverride", "SetBodyMorph", nullptr, ref, std::string("PregnancyBelly"), std::string("BFHeredity.Curse"), a_amount);
+		CallStatic("NiOverride", "UpdateModelWeight", nullptr, ref);
+		Later(0.45f, [ref] {
+			CallStatic("NiOverride", "ClearBodyMorph", nullptr, ref, std::string("PregnancyBelly"), std::string("BFHeredity.Curse"));
+			CallStatic("NiOverride", "UpdateModelWeight", nullptr, ref);
+		});
+	}
+
 	void BalCurseFx(bool a_full)
 	{
 		auto  pc = static_cast<RE::Actor*>(RE::PlayerCharacter::GetSingleton());
@@ -1393,8 +1423,13 @@ namespace
 			CallMethod(vfx, "VisualEffect", "Play", nullptr, ref, len * 0.7f, static_cast<RE::TESObjectREFR*>(nullptr));
 		}
 		if (auto sh = dh->LookupForm<RE::TESEffectShader>(0x075272, "Skyrim.esm")) {  // ReanimateFXShader: black-violet haze on the body
-			CallMethod(sh, "EffectShader", "Play", nullptr, ref, len * 0.8f);
+			CallMethod(sh, "EffectShader", "Play", nullptr, ref, len * 0.45f);  // only at first, then it gathers at the belly
 		}
+		// the haze gathers and is drawn into the lower belly
+		Later(len * 0.15f, [len] {
+			BellyArt(0x10F507, len * 0.35f);  // NightingaleStrifeAbsorbTargetPointFX: dark point the streams converge on
+			BellyArt(0x0531AE, len * 0.35f);  // SoulTrapTargetPointFX: violet swirl sinking in
+		});
 		Face(9, 70, 30);  // fear
 		CallStatic("Game", "ShakeCamera", nullptr, static_cast<RE::TESObjectREFR*>(nullptr), 0.25f, len * 0.4f);
 		CallStatic("Game", "ShakeController", nullptr, 0.3f, 0.5f, len * 0.4f);
@@ -1403,6 +1438,7 @@ namespace
 			Face(11, 80, 60);  // pain / sorrow, eyes half shut
 			CallStatic("Game", "ShakeCamera", nullptr, static_cast<RE::TESObjectREFR*>(nullptr), 0.5f, 0.6f);
 			CallStatic("Game", "ShakeController", nullptr, 0.6f, 0.8f, 0.5f);
+			BellyPulse(0.12f);
 			BalWear(1, true);  // mark surfaces, glowing
 		});
 		Later(len, [] {
