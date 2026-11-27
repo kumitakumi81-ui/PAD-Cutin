@@ -67,6 +67,7 @@ namespace
 		// camera (PAD Cutin / KSAB camera work): whole body -> circle -> face -> back
 		bool  camera = true;
 		float insertCameraSeconds = 7.0f;  // insertion shot: behind -> front -> whole body -> face
+		float insertCameraZoom = 1.0f;     // insertion camera distance (smaller = closer)
 		bool  dropBottle = true;           // the collected bottle drops at the giver's feet (otherwise straight into the inventory)
 		// fields read by Cutin.h
 		bool  cutinPlayer = true;
@@ -145,6 +146,8 @@ namespace
 			} else if (key == "bcamera") {
 				g_settings.camera = b();
 				g_settings.cutinPlayer = g_settings.camera;
+			} else if (key == "finsertcamerazoom") {
+				g_settings.insertCameraZoom = static_cast<float>(std::atof(val.c_str()));
 			} else if (key == "bdropbottle") {
 				g_settings.dropBottle = b();
 			} else if (key == "finsertcameraseconds") {
@@ -1096,7 +1099,9 @@ namespace
 		g_dnaBusy = true;
 		LoadSettings(false);  // MCM changes take effect at once
 		// insertion: animation (when registered), voice, camera, then it is in after insertSeconds
-		const bool anim = Anim(pc, "dse-sgo-insert01-01");
+		static std::mt19937 s_rng{ std::random_device{}() };
+		const char*         insertAnim = (s_rng() & 1) ? "dse-sgo-insert02-01" : "dse-sgo-insert01-01";
+		const bool          anim = Anim(pc, insertAnim);
 		HoldPlayer(true);
 		g_inserting = true;
 		VoiceLoop(pc->GetFormID(), 0.0f, g_settings.insertSeconds, [] { return g_inserting.load(); });

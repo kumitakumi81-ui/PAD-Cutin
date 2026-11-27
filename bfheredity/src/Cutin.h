@@ -786,13 +786,22 @@ namespace Cutin
 		RE::NiQuaternion rot;
 		// orbit shot: the whole body framed from behind, the camera slowly circling round to the front at the same distance
 		RE::NiPoint3     bodyAt = a->GetPosition() + RE::NiPoint3{ 0, 0, 72.0f * a->GetScale() };
-		const float      bodyDist = std::max(g_settings.cutinPartDistance, 60.0f) * 2.3f;
-		// starts behind on the lower body (waist height, closer), widens to the whole body as it comes round to the front
+		float            bodyDist = std::max(g_settings.cutinPartDistance, 60.0f) * 2.3f;
+		// close on the action (her hands at the waist) from behind, coming round to the front and easing out to waist-up
 		RE::NiPoint3 lowAt = bodyAt - RE::NiPoint3{ 0, 0, 30.0f * a->GetScale() };
 		if (auto pel = Node(a.get(), "NPC Pelvis [Pelv]")) {
 			lowAt = pel->world.translate;
+			RE::NiPoint3 hands;
+			if (PairMid(a.get(), "NPC L Hand [LHnd]", "NPC R Hand [RHnd]", hands)) {
+				lowAt = lowAt * 0.4f + hands * 0.6f;  // follows the hands as they move
+			}
 		}
-		const float lowDist = std::max(g_settings.cutinPartDistance, 60.0f) * 1.1f;
+		const float zoom = std::clamp(g_settings.insertCameraZoom, 0.3f, 3.0f);
+		const float lowDist = std::max(g_settings.cutinPartDistance, 60.0f) * 0.7f * zoom;
+		if (auto sp = Node(a.get(), "NPC Spine1 [Spn1]")) {
+			bodyAt = sp->world.translate;  // waist-up rather than the whole body
+		}
+		bodyDist = std::max(g_settings.cutinPartDistance, 60.0f) * 1.5f * zoom;
 		auto        ring = [&](float a_turn, float a_wide, RE::NiPoint3& o_pos, RE::NiQuaternion& o_rot) {
             const float        th = a->data.angle.z + 3.14159265f * (1.0f - a_turn) * g.orbitSign;  // a_turn 0 = behind, 1 = in front
             const RE::NiPoint3 at = lowAt + (bodyAt - lowAt) * a_wide;
