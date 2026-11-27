@@ -51,6 +51,7 @@ namespace
 		bool          nameOnBirth = true;
 		std::uint32_t renameKey = 0x31;  // N
 		bool          useOCum = true;           // OCum Ascended: its look on her after insertion
+		bool          conceptionVideo = true;   // the moment she conceives: Data/BFHeredity/Video/conception.mp4 + .wav
 		bool          softAbs = true;           // while pregnant, take the abs morphs back (Skill Based Muscle's + the ones built into the body)
 		float         bakedAbs = 1.0f;          // MuscleAbs / MuscleMoreAbs_v2 built into the body in BodySlide (Wonder Woman preset = 1.0)
 		float         softAbsStrength = 1.0f;   // 1 = flat at the last stage
@@ -161,6 +162,8 @@ namespace
 				g_settings.cutinPlayer = g_settings.camera;
 			} else if (key == "finsertcamerazoom") {
 				g_settings.insertCameraZoom = static_cast<float>(std::atof(val.c_str()));
+			} else if (key == "bconceptionvideo") {
+				g_settings.conceptionVideo = b();
 			} else if (key == "bsoftabs") {
 				g_settings.softAbs = b();
 			} else if (key == "fbakedabs") {
@@ -763,7 +766,8 @@ namespace
 				}
 				const auto code = b->GetIDCode();
 				if (g_settings.videoTestKey != 0 && code == g_settings.videoTestKey) {
-					Video::Play(L"ovulation");
+					static bool odd = false;  // each press: ovulation, conception, ovulation, ...
+					Video::Play((odd = !odd) ? L"ovulation" : L"conception");
 					continue;
 				}
 				if (code != g_settings.renameKey && (g_settings.collectKey == 0 || code != g_settings.collectKey)) {
@@ -1608,6 +1612,13 @@ namespace
 				}
 				const int last = g_lastCycle.exchange(st);
 				ApplySoftAbs(st);  // cheap when nothing changed
+				if (last >= 0 && last <= 3 && st >= 4 && st <= 7) {
+					Log("cycle: conceived");
+					LoadSettings(false);
+					if (g_settings.conceptionVideo) {
+						Video::Play(L"conception");
+					}
+				}
 				if (last != -1 && last != 1 && st == 1) {
 					Log("cycle: ovulation started");
 					LoadSettings(false);
