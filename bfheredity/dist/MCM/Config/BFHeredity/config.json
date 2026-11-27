@@ -76,6 +76,37 @@
           "valueOptions": {
             "sourceType": "ModSettingBool"
           }
+        },
+        {
+          "text": "挿入の瞬間",
+          "type": "header"
+        },
+        {
+          "id": "bInsertFace:Scene",
+          "text": "表情をつける",
+          "type": "toggle",
+          "help": "準備中は緊張した顔、入った瞬間は驚いて目を細め、そのあと安らいだ顔になる（目の動きは Mfg Fix が必要）",
+          "valueOptions": {
+            "sourceType": "ModSettingBool"
+          }
+        },
+        {
+          "id": "bInsertShake:Scene",
+          "text": "画面の揺れと振動",
+          "type": "toggle",
+          "help": "入った瞬間にカメラを少し揺らし、コントローラーを振動させる",
+          "valueOptions": {
+            "sourceType": "ModSettingBool"
+          }
+        },
+        {
+          "id": "bBlush:Scene",
+          "text": "赤面（Blush When Aroused）",
+          "type": "toggle",
+          "help": "挿入や儀式の場面で SexLab Aroused の興奮度を上げ、Blush When Aroused で頬を赤くする",
+          "valueOptions": {
+            "sourceType": "ModSettingBool"
+          }
         }
       ]
     },
@@ -221,6 +252,28 @@
             "step": 1,
             "formatString": "{0}",
             "sourceType": "ModSettingInt"
+          }
+        }
+      ]
+    },
+    {
+      "pageDisplayName": "クエスト",
+      "content": [
+        {
+          "text": "バルの烙印",
+          "type": "header"
+        },
+        {
+          "id": "fMarkDays:Bal",
+          "text": "紋様が1段階進む日数",
+          "type": "slider",
+          "help": "呪いの紋様が次の段階に進むまでのゲーム内日数（警戒者のお守りがあると倍かかる）",
+          "valueOptions": {
+            "min": 1.0,
+            "max": 30.0,
+            "step": 0.5,
+            "formatString": "{1}",
+            "sourceType": "ModSettingFloat"
           }
         }
       ]
