@@ -71,5 +71,15 @@ inline constexpr std::uint32_t kFatherFaction = 0x8EB;
 inline constexpr std::uint32_t kAssistInfo = 0x8F2;
 inline constexpr std::uint32_t kLiveEgg = 0x8F9;
 inline constexpr std::uint32_t kVermifuge = 0x8FA;
+inline constexpr std::uint32_t kBalQuest = 0x8FC;
+inline constexpr std::uint32_t kBalAvatar = 0x8FD;
+inline constexpr std::uint32_t kBalCharm = 0x8FE;
+inline constexpr std::uint32_t kTaintedBlood = 0x8FF;
+inline constexpr std::uint32_t kBalAsk = 0x902;
+inline constexpr std::uint32_t kBalAsk2 = 0x903;
+inline constexpr std::uint32_t kBalVigil = 0x906;
+inline constexpr std::uint32_t kBalDibella = 0x909;
+inline constexpr std::uint32_t kBalMara = 0x90C;
+inline constexpr std::uint32_t kBalRitual = 0x90F;
 inline constexpr std::uint32_t kTellInfos[] = {0x8F5, 0x8F6, 0x8F7, 0x8F8};
 }

@@ -56,6 +56,11 @@ namespace
 		float         bakedAbs = 1.0f;          // MuscleAbs / MuscleMoreAbs_v2 built into the body in BodySlide (Wonder Woman preset = 1.0)
 		float         softAbsStrength = 1.0f;   // 1 = flat at the last stage
 		bool          soloScene = true;
+		std::string   markName = "060";          // Bal's Mark: LewdMarks design (SlaveTats sections LewdMarks / LewdMarks-glow)
+		float         markDays = 7.0f;           // days per stage of the curse
+		bool          blush = true;              // raise SexLab Aroused exposure at those moments, so Blush When Aroused reddens her face
+		bool          insertFace = true;        // her face during insertion (nervous, the moment it goes in, relief)
+		bool          insertShake = true;       // camera shake + controller rumble the moment it goes in
 		// live chaurus egg
 		bool          liveEgg = true;           // the item drops at all
 		float         eggSacChance = 0.15f;     // harvesting a chaurus egg sac also gives a live egg
@@ -186,6 +191,16 @@ namespace
 				g_settings.eggDays = static_cast<float>(std::atof(val.c_str()));
 			} else if (key == "ieggcount") {
 				g_settings.eggCount = std::atoi(val.c_str());
+			} else if (key == "smarkname") {
+				g_settings.markName = val;
+			} else if (key == "fmarkdays") {
+				g_settings.markDays = static_cast<float>(std::atof(val.c_str()));
+			} else if (key == "bblush") {
+				g_settings.blush = b();
+			} else if (key == "binsertface") {
+				g_settings.insertFace = b();
+			} else if (key == "binsertshake") {
+				g_settings.insertShake = b();
 			} else if (key == "bsoloscene") {
 				g_settings.soloScene = b();
 			} else if (key == "buseocum") {
@@ -1235,8 +1250,198 @@ namespace
 		});
 	}
 
+	// SexLab Aroused exposure through its "slaUpdateExposure" mod event (Blush When Aroused reads it and reddens her face)
+	void Blush(float a_amount)
+	{
+		if (!g_settings.blush || !RE::TESDataHandler::GetSingleton()->LookupModByName("SexLabAroused.esm")) {
+			return;
+		}
+		CallStatic(
+			"ModEvent", "Create",
+			[a_amount](const RE::BSScript::Variable& v) {
+				const std::int32_t h = v.IsInt() ? v.GetSInt() : 0;
+				if (!h) {
+					return;
+				}
+				CallStatic(
+					"ModEvent", "PushForm",
+					[h, a_amount](const RE::BSScript::Variable&) {
+						CallStatic(
+							"ModEvent", "PushFloat",
+							[h](const RE::BSScript::Variable&) { CallStatic("ModEvent", "Send", nullptr, h); },
+							h, a_amount);
+					},
+					h, static_cast<RE::TESForm*>(RE::PlayerCharacter::GetSingleton()));
+			},
+			std::string("slaUpdateExposure"));
+	}
+
+	// ------------------------------------------------------------------ quest: Bal's Mark
+	struct BalState
+	{
+		double       start = 0.0;  // game day the curse took hold (0 = none)
+		std::int32_t qstage = 0;   // our copy of the quest's stage
+		std::uint8_t trials = 0;   // 1 Dibella, 2 Mara, 4 the tainted blood
+		std::uint8_t slow = 0;     // the Vigilant's charm: half speed
+		std::uint8_t spawned = 0;  // the first avatar has appeared
+		std::uint8_t final = 0;    // the ritual's avatar is out
+		std::uint8_t dormant = 0;  // lifted by the short road (the root sleeps)
+		std::uint8_t blood = 0;    // a vampire already carries the tainted blood
+	};
+	BalState     g_bal;
+	std::int32_t g_balShown = -1;  // stage * 2 + glow, as worn now
+
+	RE::TESQuest* BalQuest() { return RE::TESDataHandler::GetSingleton()->LookupForm<RE::TESQuest>(PoolData::kBalQuest, kPlugin); }
+	void          BalStage(std::int32_t a_stage)
+	{
+		g_bal.qstage = a_stage;
+		if (auto q = BalQuest()) {
+			CallMethod(q, "Quest", "SetCurrentStageID", nullptr, a_stage);
+		}
+		Log("bal: stage {}", a_stage);
+	}
+	void BalObjective(std::int32_t a_index, bool a_done)
+	{
+		if (auto q = BalQuest()) {
+			if (a_done) {
+				CallMethod(q, "Quest", "SetObjectiveCompleted", nullptr, a_index, true);
+			} else {
+				CallMethod(q, "Quest", "SetObjectiveDisplayed", nullptr, a_index, true, false);
+			}
+		}
+	}
+	void Fade(float a_hold)
+	{
+		CallStatic("Game", "FadeOutGame", nullptr, true, true, 0.0f, 1.2f);
+		Later(a_hold, [] { CallStatic("Game", "FadeOutGame", nullptr, false, true, 0.0f, 1.5f); });
+	}
+	int BalCurseStage()
+	{
+		if (g_bal.start <= 0.0 || g_bal.dormant) {
+			return 0;
+		}
+		const double rate = g_bal.slow ? 0.5 : 1.0;
+		const double p = (GameDays() - g_bal.start) * rate / std::max(0.5f, g_settings.markDays);
+		return std::clamp(1 + static_cast<int>(p), 1, 4);
+	}
+	void BalWear(int a_stage, bool a_glow)
+	{
+		const std::int32_t key = a_stage * 2 + (a_glow ? 1 : 0);
+		if (key == g_balShown) {
+			return;
+		}
+		g_balShown = key;
+		auto        pc = static_cast<RE::Actor*>(RE::PlayerCharacter::GetSingleton());
+		std::string name = g_settings.markName;
+		for (const char* sec : { "LewdMarks", "LewdMarks-glow" }) {
+			CallStatic("SlaveTats", "simple_remove_tattoo", nullptr, pc, std::string(sec), name, true, true);
+		}
+		if (a_stage > 0) {
+			static const float kAlpha[] = { 0.35f, 0.55f, 0.8f, 1.0f };
+			CallStatic("SlaveTats", "simple_add_tattoo", nullptr, pc, std::string(a_glow ? "LewdMarks-glow" : "LewdMarks"), name, static_cast<std::int32_t>(0), true, true, kAlpha[std::clamp(a_stage, 1, 4) - 1]);
+		}
+		CallStatic("SlaveTats", "synchronize_tattoos", nullptr, pc, true);
+		Log("bal: mark stage {} glow {}", a_stage, a_glow);
+	}
+	RE::TESObjectREFR* SpawnAvatar(RE::TESObjectREFR* a_at, float a_dx, float a_dy, float a_scale)
+	{
+		auto npc = RE::TESDataHandler::GetSingleton()->LookupForm<RE::TESNPC>(PoolData::kBalAvatar, kPlugin);
+		if (!a_at || !npc) {
+			return nullptr;
+		}
+		auto ref = a_at->PlaceObjectAtMe(npc, false);
+		if (!ref) {
+			return nullptr;
+		}
+		RE::TESObjectREFR* r = ref.get();
+		CallMethod(r, "ObjectReference", "MoveTo", nullptr, a_at, a_dx, a_dy, 0.0f, true);
+		CallMethod(r, "ObjectReference", "SetScale", nullptr, a_scale);
+		CallMethod(r, "Actor", "StartCombat", nullptr, static_cast<RE::Actor*>(RE::PlayerCharacter::GetSingleton()));
+		return r;
+	}
+	void BalBegin()
+	{
+		Fade(3.0f);
+		Notify("黒い光が下腹部に吸い込まれた……");
+		Later(1.5f, [] {
+			g_bal.start = GameDays();
+			BalStage(10);
+			Later(2.0f, [] {
+				Notify("「勝ったのはお前だ。だが、お前の胎はもう我がものだ」");
+				BalStage(20);
+				BalObjective(20, false);
+			});
+		});
+	}
+	void BalTrial(std::uint8_t a_bit, std::int32_t a_stage)
+	{
+		g_bal.trials |= a_bit;
+		BalStage(a_stage);
+		BalObjective(a_stage, true);
+		// the mark fades by one stage: progress set back to the start of the stage below
+		const int    now = BalCurseStage();
+		const double rate = g_bal.slow ? 0.5 : 1.0;
+		const double p = std::max(0, now - 2) * static_cast<double>(std::max(0.5f, g_settings.markDays));
+		g_bal.start = GameDays() - p / rate;
+		Notify("紋様が少し薄くなった");
+		if ((g_bal.trials & 7) == 7) {
+			Later(2.0f, [] {
+				BalStage(50);
+				BalObjective(50, false);
+			});
+		}
+	}
+	void BalEnd()
+	{
+		g_bal.dormant = 1;
+		g_bal.final = 0;
+		BalWear(0, false);
+		BalStage(60);
+		BalObjective(50, true);
+		Notify("胎に繋がれた鎖が砕けた。紋様がゆっくりと消えていく……");
+	}
+	// every poll: the first avatar at the altar, the mark's stage and glow
+	void CheckBal()
+	{
+		auto pc = RE::PlayerCharacter::GetSingleton();
+		if (!pc) {
+			return;
+		}
+		if (!g_bal.spawned && g_bal.start <= 0.0) {
+			auto da10 = RE::TESDataHandler::GetSingleton()->LookupForm<RE::TESQuest>(0x22F08, "Skyrim.esm");
+			auto cell = pc->GetParentCell();
+			if (da10 && da10->GetCurrentStageID() >= 200 && da10->GetCurrentStageID() < 500 && cell && cell->GetFormID() == 0x18BE9) {
+				if (SpawnAvatar(RE::TESForm::LookupByID<RE::TESObjectREFR>(0xC7B73), 220.0f, 0.0f, 1.3f)) {
+					g_bal.spawned = 1;
+					Notify("「我が器にふさわしいか、試してやろう」");
+					Log("bal: avatar at the altar");
+				}
+			}
+		}
+		const int st = BalCurseStage();
+		if (st == 0) {
+			if (g_balShown > 0) {
+				BalWear(0, false);
+			}
+			return;
+		}
+		CycleState([st](int cycle) {
+			const bool glow = cycle == 1;
+			if (glow && st >= 3 && g_balShown >= 0 && !(g_balShown & 1)) {
+				Notify("下腹部の紋様が熱を帯びて光っている……");
+				Blush(20.0f);
+			}
+			BalWear(st, glow);
+		});
+	}
+
 	void UseContraceptive()
 	{
+		if (BalCurseStage() >= 2) {
+			Notify("紋様が熱を帯び、避妊の備えが焼け落ちた……");
+			Log("bal: contraception refused by the mark");
+			return;
+		}
 		CallMethod(BFController(), "FWController", "AddContraception", nullptr, static_cast<RE::Actor*>(RE::PlayerCharacter::GetSingleton()), 100.0f);
 		Log("contraception +100");
 		Notify("避妊の備えをした");
@@ -1415,6 +1620,10 @@ namespace
 	public:
 		RE::BSEventNotifyControl ProcessEvent(const RE::TESContainerChangedEvent* a_event, RE::BSTEventSource<RE::TESContainerChangedEvent>*) override
 		{
+			if (a_event && a_event->newContainer == 0x14 && a_event->baseObj == Own(PoolData::kTaintedBlood) && !(g_bal.trials & 4)) {
+				SKSE::GetTaskInterface()->AddTask([] { BalTrial(4, 43); });
+				return RE::BSEventNotifyControl::kContinue;
+			}
 			if (!a_event || a_event->newContainer != 0x14 || a_event->oldContainer != 0 || a_event->baseObj != 0x3AD56) {
 				return RE::BSEventNotifyControl::kContinue;
 			}
@@ -1439,6 +1648,23 @@ namespace
 			const RE::FormID who = a_event->actorDying->GetFormID();
 			SKSE::GetTaskInterface()->AddTask([who] {
 				auto a = RE::TESForm::LookupByID<RE::Actor>(who);
+				if (a && a->GetActorBase() && a->GetActorBase()->GetFormID() == Own(PoolData::kBalAvatar)) {
+					if (g_bal.final) {
+						BalEnd();
+					} else if (g_bal.start <= 0.0) {
+						BalBegin();
+					}
+					return;
+				}
+				if (a && g_bal.qstage >= 40 && g_bal.qstage < 60 && !(g_bal.trials & 4) && !g_bal.blood) {
+					auto vamp = RE::TESDataHandler::GetSingleton()->LookupForm<RE::BGSKeyword>(0xA82BB, "Skyrim.esm");
+					auto blood = RE::TESForm::LookupByID<RE::TESBoundObject>(Own(PoolData::kTaintedBlood));
+					if (vamp && blood && a->HasKeyword(vamp)) {
+						a->AddObjectToContainer(blood, nullptr, 1, nullptr);
+						g_bal.blood = 1;
+						Notify("吸血鬼の亡骸から、黒い血の気配がする");
+					}
+				}
 				LoadSettings(false);
 				static std::mt19937 rng{ std::random_device{}() };
 				if (!a || !g_settings.liveEgg || !IsChaurus(a) || std::uniform_real_distribution<float>(0, 1)(rng) >= g_settings.eggKillChance) {
@@ -1609,6 +1835,39 @@ namespace
 				Later(1.0f, [who] { SceneCollect(RE::TESForm::LookupByID<RE::Actor>(who), false); });
 				return RE::BSEventNotifyControl::kContinue;
 			}
+			if (const auto info = a_event->topicInfoFormID; info == Own(PoolData::kBalAsk) || info == Own(PoolData::kBalAsk2)) {
+				BalObjective(20, true);
+				BalStage(30);
+				BalObjective(30, false);
+				return RE::BSEventNotifyControl::kContinue;
+			} else if (info == Own(PoolData::kBalVigil)) {
+				BalObjective(30, true);
+				g_bal.slow = 1;
+				if (auto charm = RE::TESForm::LookupByID<RE::TESBoundObject>(Own(PoolData::kBalCharm))) {
+					RE::PlayerCharacter::GetSingleton()->AddObjectToContainer(charm, nullptr, 1, nullptr);
+				}
+				BalStage(40);
+				for (std::int32_t o : { 41, 42, 43 }) {
+					BalObjective(o, false);
+				}
+				return RE::BSEventNotifyControl::kContinue;
+			} else if (info == Own(PoolData::kBalDibella)) {
+				Fade(4.0f);
+				Blush(20.0f);
+				Later(2.0f, [] { BalTrial(1, 41); });
+				return RE::BSEventNotifyControl::kContinue;
+			} else if (info == Own(PoolData::kBalMara)) {
+				Later(1.0f, [] { BalTrial(2, 42); });
+				return RE::BSEventNotifyControl::kContinue;
+			} else if (info == Own(PoolData::kBalRitual)) {
+				Fade(3.0f);
+				Later(2.0f, [] {
+					g_bal.final = 1;
+					Notify("コールドハーバーの冷たい風が吹きつける……");
+					SpawnAvatar(RE::PlayerCharacter::GetSingleton(), 0.0f, 400.0f, 1.45f);
+				});
+				return RE::BSEventNotifyControl::kContinue;
+			}
 			for (std::size_t i = 0; i < std::size(PoolData::kTellInfos); ++i) {
 				if (a_event->topicInfoFormID == Own(PoolData::kTellInfos[i])) {
 					Log("told {:08X} (line {})", who, i);
@@ -1631,6 +1890,37 @@ namespace
 		}
 	};
 	TopicSink g_topic;
+
+	// her face: SetExpressionOverride moods (12 surprise, 13 puzzled, 10 happy); eyes through Mfg Fix when it is there
+	void Face(std::int32_t a_mood, std::int32_t a_strength, std::int32_t a_eyes = -1)
+	{
+		auto pc = static_cast<RE::Actor*>(RE::PlayerCharacter::GetSingleton());
+		if (a_mood < 0) {
+			CallMethod(pc, "Actor", "ClearExpressionOverride", nullptr);
+			CallStatic("MfgConsoleFunc", "ResetPhonemeModifier", nullptr, pc);
+			return;
+		}
+		CallMethod(pc, "Actor", "SetExpressionOverride", nullptr, a_mood, a_strength);
+		if (a_eyes >= 0) {
+			CallStatic("MfgConsoleFunc", "SetModifier", nullptr, pc, static_cast<std::int32_t>(0), a_eyes);  // blink left
+			CallStatic("MfgConsoleFunc", "SetModifier", nullptr, pc, static_cast<std::int32_t>(1), a_eyes);  // blink right
+		}
+	}
+
+	// the moment it goes in: a short shake, the pad rumbles, her face reacts
+	void InsertMoment()
+	{
+		LoadSettings(false);
+		if (g_settings.insertShake) {
+			CallStatic("Game", "ShakeCamera", nullptr, static_cast<RE::TESObjectREFR*>(nullptr), 0.35f, 0.45f);
+			CallStatic("Game", "ShakeController", nullptr, 0.45f, 0.6f, 0.35f);
+		}
+		Blush(25.0f);
+		if (g_settings.insertFace) {
+			Face(12, 90, 55);  // surprise, eyes half shut
+			Later(1.6f, [] { Face(10, 45, 25); });  // then a soft, relieved look
+		}
+	}
 
 	void StartInsert(RE::FormID a_item)
 	{
@@ -1656,12 +1946,17 @@ namespace
 		const bool          anim = Anim(pc, insertAnim);
 		HoldPlayer(true);
 		g_inserting = true;
+		if (g_settings.insertFace) {
+			Face(13, 55, 15);  // nervous while she gets ready
+		}
+		Blush(10.0f);
 		VoiceLoop(pc->GetFormID(), 0.0f, g_settings.insertSeconds, [] { return g_inserting.load(); });
 		// behind -> slowly round to the front (whole body) -> face; the player is held until the shot is over
 		const float camLen = g_settings.camera ? std::max(g_settings.insertSeconds + 1.0f, g_settings.insertCameraSeconds) : g_settings.insertSeconds + 1.0f;
 		Camera(pc, camLen, true);
 		Later(g_settings.insertSeconds, [a_item, anim, camLen] {
 			g_inserting = false;
+			InsertMoment();
 			Voice(RE::PlayerCharacter::GetSingleton(), Heat::kHot);
 			if (a_item == Own(PoolData::kLiveEgg)) {
 				CarryEggs();
@@ -1677,6 +1972,7 @@ namespace
 				if (anim) {
 					Anim(RE::PlayerCharacter::GetSingleton(), "IdleForceDefaultState");
 				}
+				Face(-1, 0);
 				if (auto pocket = RE::TESDataHandler::GetSingleton()->LookupForm<RE::TESObjectANIO>(0xBFB55, "BodySearch.esp")) {
 					pocket->SetModel("AnimObjects\\BodySearch\\AOBakaCoinbag.nif");  // Body Search's own pocket animation keeps its bag
 				}
@@ -1846,6 +2142,7 @@ namespace
 			CheckOvulation();
 			CheckGentleDrug();
 			CheckEggs();
+			CheckBal();
 		}
 		if (!g_ready || g_slots.empty()) {
 			return;
@@ -1921,6 +2218,7 @@ namespace
 	constexpr std::uint32_t kSerDna = 'DNAS';
 	constexpr std::uint32_t kSerCycle = 'OVUL';
 	constexpr std::uint32_t kSerEggs = 'EGGS';
+	constexpr std::uint32_t kSerBal = 'BALM';
 
 	void OnSave(SKSE::SerializationInterface* a_ser)
 	{
@@ -1953,6 +2251,9 @@ namespace
 		if (a_ser->OpenRecord(kSerEggs, 1)) {
 			a_ser->WriteRecordData(g_eggStart);
 			a_ser->WriteRecordData(g_eggDue);
+		}
+		if (a_ser->OpenRecord(kSerBal, 1)) {
+			a_ser->WriteRecordData(g_bal);
 		}
 		if (!a_ser->OpenRecord(kSerDna, 1)) {
 			return;
@@ -1996,6 +2297,8 @@ namespace
 		g_ovulationDue = 0.0;
 		g_eggStart = g_eggDue = 0.0;
 		g_eggMorph = -1.0f;
+		g_bal = BalState{};
+		g_balShown = -1;
 		for (auto& d : g_dna) {
 			if (d.tier) {
 				if (auto f = RE::TESForm::LookupByID<RE::AlchemyItem>(d.item)) {
@@ -2021,6 +2324,10 @@ namespace
 		while (a_ser->GetNextRecordInfo(type, version, length)) {
 			if (type == kSerCycle) {
 				a_ser->ReadRecordData(g_ovulationDue);
+				continue;
+			}
+			if (type == kSerBal) {
+				a_ser->ReadRecordData(g_bal);
 				continue;
 			}
 			if (type == kSerEggs) {
