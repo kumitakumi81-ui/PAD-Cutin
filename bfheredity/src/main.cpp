@@ -68,6 +68,10 @@ namespace
 		bool          moodFace = true;          // flushed face when aroused
 		bool          shameFace = true;         // embarrassed face and blush when seen naked
 		bool          spiritAllies = true;      // Bal's Mark: Karen, Lilian and Taranis fight Molag Bal with her
+		bool          fetusModel = true;        // a 3D child of the father's race inside her womb (seen through Pseudo X-Ray)
+		float         fetusX = 0.0f, fetusY = -5.0f, fetusZ = -3.0f;  // from the belly bone, in her own frame (right / forward / up)
+		float         fetusScale = 1.0f;
+		float         fetusPitch = 0.0f, fetusYaw = 0.0f;  // degrees, turn the child inside her
 		// live chaurus egg
 		bool          liveEgg = true;           // the item drops at all
 		float         eggSacChance = 0.15f;     // harvesting a chaurus egg sac also gives a live egg
@@ -218,6 +222,20 @@ namespace
 				g_settings.moodFace = b();
 			} else if (key == "bshameface") {
 				g_settings.shameFace = b();
+			} else if (key == "bfetusmodel") {
+				g_settings.fetusModel = b();
+			} else if (key == "ffetusx") {
+				g_settings.fetusX = static_cast<float>(std::atof(val.c_str()));
+			} else if (key == "ffetusy") {
+				g_settings.fetusY = static_cast<float>(std::atof(val.c_str()));
+			} else if (key == "ffetusz") {
+				g_settings.fetusZ = static_cast<float>(std::atof(val.c_str()));
+			} else if (key == "ffetusscale") {
+				g_settings.fetusScale = static_cast<float>(std::atof(val.c_str()));
+			} else if (key == "ffetuspitch") {
+				g_settings.fetusPitch = static_cast<float>(std::atof(val.c_str()));
+			} else if (key == "ffetusyaw") {
+				g_settings.fetusYaw = static_cast<float>(std::atof(val.c_str()));
 			} else if (key == "bspiritallies") {
 				g_settings.spiritAllies = b();
 			} else if (key == "bsoloscene") {
@@ -3021,6 +3039,113 @@ namespace
 		Later(1.7f, play);
 	}
 
+
+	// ------------------------------------------------------------------ 0.13: the child inside her (a 3D model on the belly bone)
+	struct FetusSlot
+	{
+		RE::NiPointer<RE::NiNode> node;
+		RE::NiNode*               parent = nullptr;
+		std::string               path;
+	};
+	FetusSlot g_fetus;
+
+	void FetusDetach()
+	{
+		if (g_fetus.node && g_fetus.node->parent) {
+			RE::NiPointer<RE::NiAVObject> out;
+			g_fetus.node->parent->DetachChild(g_fetus.node.get(), out);
+		}
+		g_fetus = FetusSlot{};
+	}
+
+	RE::NiNode* BellyNode(RE::PlayerCharacter* pc)
+	{
+		auto root = pc ? pc->Get3D(false) : nullptr;
+		if (!root) {
+			return nullptr;
+		}
+		for (const char* n : { "NPC Belly", "NPC Pelvis [Pelv]", "NPC Spine [Spn0]" }) {
+			if (auto o = root->GetObjectByName(n); o && o->AsNode()) {
+				return o->AsNode();
+			}
+		}
+		return nullptr;
+	}
+
+	// main thread: which model should be in her now, attach / swap / remove it
+	void UpdateFetus()
+	{
+		auto pc = RE::PlayerCharacter::GetSingleton();
+		int  st, look;
+		float daysIn;
+		{
+			std::scoped_lock l(Womb::g_lock);
+			st = Womb::g_data.state;
+			look = Womb::g_data.fatherLook;
+			daysIn = Womb::g_data.daysIn;
+		}
+		std::string want;
+		if (g_settings.fetusModel && st >= 5 && st <= 7) {
+			static const char* kRace[] = { "human", "orc", "elf", "khajiit", "argonian", "human", "human", "human" };
+			const int step = st == 5 ? (daysIn < Womb::Length(5) * 0.5f ? 1 : 2) : 3;
+			want = std::string("BFHeredity\\Fetus\\fetus_") + kRace[std::clamp(look, 0, 7)] + "_" + std::to_string(step) + ".nif";
+		}
+		auto belly = BellyNode(pc);
+		if (want.empty() || !belly) {
+			if (g_fetus.node) {
+				FetusDetach();
+			}
+			return;
+		}
+		if (want == g_fetus.path && g_fetus.node && g_fetus.node->parent == belly) {
+			return;
+		}
+		FetusDetach();
+		RE::NiPointer<RE::NiNode>        model;
+		RE::BSModelDB::DBTraits::ArgsType args{};
+		if (RE::BSModelDB::Demand(want.c_str(), model, args) != RE::BSResource::ErrorCode::kNone || !model) {
+			Log("fetus: cannot load {}", want);
+			g_fetus.path = want;  // do not retry every second
+			return;
+		}
+		belly->AttachChild(model.get(), true);
+		g_fetus.node = model;
+		g_fetus.parent = belly;
+		g_fetus.path = want;
+		Log("fetus: {} on {}", want, belly->name.c_str());
+	}
+
+	// often: keep it upright in her own frame, at the offset from the belly bone
+	void FetusPose()
+	{
+		auto pc = RE::PlayerCharacter::GetSingleton();
+		auto n = g_fetus.node.get();
+		auto root = pc ? pc->Get3D(false) : nullptr;
+		if (!n || !n->parent || !root) {
+			return;
+		}
+		const auto& pw = n->parent->world;
+		const auto& rw = root->world;
+		const RE::NiPoint3 off{ g_settings.fetusX, g_settings.fetusY, g_settings.fetusZ };
+		const RE::NiPoint3 worldOff = rw.rotate * off;
+		const auto         inv = pw.rotate.Transpose();
+		const float        ps = pw.scale > 0.0f ? pw.scale : 1.0f;
+		n->local.translate = (inv * worldOff) / ps;
+		const float   px = g_settings.fetusPitch * 0.0174533f, yz = g_settings.fetusYaw * 0.0174533f;
+		RE::NiMatrix3 rx, rz;
+		rx.entry[0][0] = 1.0f; rx.entry[0][1] = 0.0f; rx.entry[0][2] = 0.0f;
+		rx.entry[1][0] = 0.0f; rx.entry[1][1] = std::cos(px); rx.entry[1][2] = -std::sin(px);
+		rx.entry[2][0] = 0.0f; rx.entry[2][1] = std::sin(px); rx.entry[2][2] = std::cos(px);
+		rz.entry[0][0] = std::cos(yz); rz.entry[0][1] = -std::sin(yz); rz.entry[0][2] = 0.0f;
+		rz.entry[1][0] = std::sin(yz); rz.entry[1][1] = std::cos(yz); rz.entry[1][2] = 0.0f;
+		rz.entry[2][0] = 0.0f; rz.entry[2][1] = 0.0f; rz.entry[2][2] = 1.0f;
+		const RE::NiMatrix3 turn = rz * rx;
+		n->local.rotate = inv * rw.rotate * turn;
+		n->local.scale = std::clamp(g_settings.fetusScale, 0.05f, 5.0f) / ps;
+		RE::NiUpdateData ud;
+		n->Update(ud);
+	}
+
 	void CheckOvulation()
 	{
 		auto pc = RE::PlayerCharacter::GetSingleton();
@@ -3072,6 +3197,7 @@ namespace
 			CheckPact();
 			UpdateWomb();
 			CheckMood();
+			UpdateFetus();
 		}
 		if (!g_ready || g_slots.empty()) {
 			return;
@@ -3391,7 +3517,7 @@ namespace
 			std::thread([] {
 				for (;;) {
 					std::this_thread::sleep_for(50ms);
-					SKSE::GetTaskInterface()->AddTask([] { Cutin::Poll(); });
+					SKSE::GetTaskInterface()->AddTask([] { Cutin::Poll(); FetusPose(); });
 				}
 			}).detach();
 			BuildSlots();
