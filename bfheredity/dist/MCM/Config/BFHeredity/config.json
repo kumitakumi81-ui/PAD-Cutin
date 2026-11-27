@@ -175,6 +175,97 @@
           "valueOptions": {
             "sourceType": "ModSettingBool"
           }
+        },
+        {
+          "type": "header",
+          "text": "胎内の子（立体）"
+        },
+        {
+          "id": "bFetusModel:Fetus",
+          "text": "胎内に子を表示",
+          "type": "toggle",
+          "help": "妊娠中、X線の窓（Pseudo X-Ray）の子宮の中に、父親の種族の子を立体で表示します",
+          "valueOptions": {
+            "sourceType": "ModSettingBool"
+          }
+        },
+        {
+          "id": "fFetusX:Fetus",
+          "text": "位置：左右",
+          "type": "slider",
+          "help": "腹の骨からの左右のずれ",
+          "valueOptions": {
+            "min": -15,
+            "max": 15,
+            "step": 0.5,
+            "formatString": "{1}",
+            "sourceType": "ModSettingFloat"
+          }
+        },
+        {
+          "id": "fFetusY:Fetus",
+          "text": "位置：前後",
+          "type": "slider",
+          "help": "腹の骨からの前後のずれ（マイナスで体の内側）",
+          "valueOptions": {
+            "min": -15,
+            "max": 15,
+            "step": 0.5,
+            "formatString": "{1}",
+            "sourceType": "ModSettingFloat"
+          }
+        },
+        {
+          "id": "fFetusZ:Fetus",
+          "text": "位置：上下",
+          "type": "slider",
+          "help": "腹の骨からの上下のずれ",
+          "valueOptions": {
+            "min": -15,
+            "max": 15,
+            "step": 0.5,
+            "formatString": "{1}",
+            "sourceType": "ModSettingFloat"
+          }
+        },
+        {
+          "id": "fFetusScale:Fetus",
+          "text": "大きさ",
+          "type": "slider",
+          "help": "子の大きさ（育つにつれて自動で大きくなります。これはその倍率）",
+          "valueOptions": {
+            "min": 0.2,
+            "max": 3.0,
+            "step": 0.05,
+            "formatString": "{2}",
+            "sourceType": "ModSettingFloat"
+          }
+        },
+        {
+          "id": "fFetusPitch:Fetus",
+          "text": "向き：前後の傾き",
+          "type": "slider",
+          "help": "子を前後に傾ける角度（度）",
+          "valueOptions": {
+            "min": -180,
+            "max": 180,
+            "step": 5,
+            "formatString": "{0}",
+            "sourceType": "ModSettingFloat"
+          }
+        },
+        {
+          "id": "fFetusYaw:Fetus",
+          "text": "向き：回転",
+          "type": "slider",
+          "help": "子を左右に回す角度（度）",
+          "valueOptions": {
+            "min": -180,
+            "max": 180,
+            "step": 5,
+            "formatString": "{0}",
+            "sourceType": "ModSettingFloat"
+          }
         }
       ]
     },
