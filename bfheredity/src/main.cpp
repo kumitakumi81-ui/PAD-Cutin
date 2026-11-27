@@ -2014,6 +2014,24 @@ namespace
 	};
 	PactState g_pact;
 	constexpr std::uint32_t kPactV1Size = offsetof(PactState, spy);
+	struct NightState
+	{
+		std::int32_t stage = 0;
+		std::uint8_t offered = 0;
+		std::uint8_t method = 0;   // 1 in her body, 2 a bottle
+		std::uint8_t place = 0;    // where the bottle is: 1 boots 2 corset 3 hair 4 inside 5 buried
+		std::uint8_t pad = 0;
+		RE::FormID   vial = 0;     // the bottle's item while it is out of the inventory
+		float        offerAt = 0.0f;
+		float        retryAt = 0.0f;
+		float        t0 = 0.0f;    // when the seed was taken (her scent grows from here)
+		float        lastCheck = 0.0f;
+	};
+	NightState g_night;
+	RE::Actor* NightBorak();
+	void       NightStage(std::int32_t a_stage);
+	void       NightLoveScene(RE::Actor* a);
+
 	constexpr const char* kLordbound = "Druadach.esm";
 	bool          HasLordbound() { return RE::TESDataHandler::GetSingleton()->LookupModByName(kLordbound) != nullptr; }
 	RE::TESQuest* PactQuest() { return RE::TESDataHandler::GetSingleton()->LookupForm<RE::TESQuest>(PoolData::kPactQuest, kPlugin); }
@@ -2704,6 +2722,36 @@ namespace
 			} else if (info == Own(PoolData::kPactTellChief) || info == Own(PoolData::kPactTellBorak)) {
 				PactStage(60);
 				return RE::BSEventNotifyControl::kContinue;
+			} else if (info == Own(PoolData::kNightPrice)) {
+				Later(1.0f, [] {
+					auto b = NightBorak();
+					Fade(3.0f);
+					NightStage(20);
+					Later(3.0f, [] {
+						auto msg = RE::TESForm::LookupByID(Own(PoolData::kNightHowMsg));
+						if (!msg) {
+							return;
+						}
+						CallMethod(msg, "Message", "Show",
+							[](const RE::BSScript::Variable& v) {
+								auto b = NightBorak();
+								if (!b) {
+									return;
+								}
+								if ((v.IsInt() ? v.GetSInt() : 0) == 0) {
+									NightLoveScene(b);
+								} else {
+									NightStage(25);
+									SceneCollect(b, true);
+								}
+							},
+							0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
+					});
+					(void)b;
+				});
+			} else if (info == Own(PoolData::kNightPry)) {
+				g_night.retryAt = static_cast<float>(GameDays()) + 2.0f;
+				NightStage(35);
 			} else if (info == Own(PoolData::kPactSpyTalk)) {
 				Later(1.0f, [] { PactSpyUnmasked(); });
 			} else if (info == Own(PoolData::kPactLetterChief) || info == Own(PoolData::kPactLetterBorak)) {
@@ -2789,6 +2837,8 @@ namespace
 		}
 	}
 
+	bool g_hideOnly = false;  // the Night Pact: the bottle goes in to be hidden, not used
+	void HiddenVialIn(RE::FormID a_item);
 	void StartInsert(RE::FormID a_item)
 	{
 		auto pc = RE::PlayerCharacter::GetSingleton();
@@ -2825,7 +2875,10 @@ namespace
 			g_inserting = false;
 			InsertMoment();
 			Voice(RE::PlayerCharacter::GetSingleton(), Heat::kHot);
-			if (a_item == Own(PoolData::kLiveEgg)) {
+			if (g_hideOnly) {
+				g_hideOnly = false;
+				HiddenVialIn(a_item);
+			} else if (a_item == Own(PoolData::kLiveEgg)) {
 				CarryEggs();
 			} else if (auto d = DnaByItem(a_item)) {
 				InjectDna(*d);
@@ -3190,6 +3243,297 @@ namespace
 		const char* rn = race ? race->GetFullName() : "";
 		return race && (race->GetFormID() == 0x013747 || race->GetFormID() == 0x0A82B9 || std::strstr(rn, "Orc") || std::strstr(rn, "オーク"));
 	}
+
+	// ------------------------------------------------------------------ 0.14.1: Night Pact (honey trap, a Blood Pact side quest)
+	RE::TESQuest* NightQuest() { return RE::TESDataHandler::GetSingleton()->LookupForm<RE::TESQuest>(PoolData::kNightQuest, kPlugin); }
+	void NightStage(std::int32_t a_stage)
+	{
+		static constexpr std::int32_t kObj[] = { 10, 20, 30, 35 };
+		const auto has = [](std::int32_t st) { return std::find(std::begin(kObj), std::end(kObj), st) != std::end(kObj); };
+		auto q = NightQuest();
+		if (q && has(g_night.stage)) {
+			CallMethod(q, "Quest", "SetObjectiveCompleted", nullptr, g_night.stage, true);
+		}
+		g_night.stage = a_stage;
+		if (q) {
+			if (a_stage == 10 && !q->IsRunning()) {
+				CallMethod(q, "Quest", "Start", nullptr);
+			}
+			CallMethod(q, "Quest", "SetCurrentStageID", nullptr, a_stage);
+			if (has(a_stage)) {
+				CallMethod(q, "Quest", "SetObjectiveDisplayed", nullptr, a_stage, true, true);
+			}
+			if (a_stage == 100) {
+				CallMethod(q, "Quest", "CompleteQuest", nullptr);
+			}
+		}
+		Log("night: stage {}", a_stage);
+	}
+	RE::Actor* NightBorak()
+	{
+		if (g_pact.borak) {
+			if (auto b = RE::TESForm::LookupByID<RE::Actor>(g_pact.borak)) {
+				return b;
+			}
+		}
+		if (auto r = PlaceOwn(PoolData::kPactBorak, GorekOrKeep(), 200.0f, 0.0f)) {
+			g_pact.borak = r->GetFormID();
+			return r->As<RE::Actor>();
+		}
+		return nullptr;
+	}
+	// the first DNA bottle she carries
+	RE::TESBoundObject* NightFindVial()
+	{
+		auto pc = RE::PlayerCharacter::GetSingleton();
+		auto counts = pc->GetInventoryCounts();
+		for (auto id : PoolData::kDna) {
+			auto item = RE::TESForm::LookupByID<RE::TESBoundObject>(Own(id));
+			if (auto it = item ? counts.find(item) : counts.end(); it != counts.end() && it->second > 0) {
+				return item;
+			}
+		}
+		return nullptr;
+	}
+	void HiddenVialIn(RE::FormID a_item)
+	{
+		auto pc = RE::PlayerCharacter::GetSingleton();
+		if (auto item = RE::TESForm::LookupByID<RE::TESBoundObject>(a_item)) {
+			pc->RemoveItem(item, 1, RE::ITEM_REMOVE_REASON::kRemove, nullptr, nullptr);
+			g_night.vial = a_item;
+		}
+		Notify("小瓶はもう、どこにも見えない");
+	}
+	// a love scene with him (OStim, else SexLab); then Beeing Female gets his seed
+	void NightLoveScene(RE::Actor* a)
+	{
+		const RE::FormID id = a->GetFormID();
+		auto done = [id] {
+			auto pc = RE::PlayerCharacter::GetSingleton();
+			auto him = RE::TESForm::LookupByID<RE::Actor>(id);
+			auto ctrl = RE::TESDataHandler::GetSingleton()->LookupForm<RE::TESQuest>(0x182A, "BeeingFemale.esm");
+			if (him && ctrl) {
+				CallMethod(ctrl, "FWController", "AddSperm", nullptr, static_cast<RE::Actor*>(pc), him, 1.0f);
+			}
+			g_night.method = 1;
+			g_night.t0 = static_cast<float>(GameDays());
+			Blush(30.0f);
+			Notify("彼の温もりと匂いが、まだ体に残っている。……急いで要塞を出なければ");
+			NightStage(30);
+		};
+		if (RE::TESDataHandler::GetSingleton()->LookupModByName("OStim.esp")) {
+			std::vector<RE::Actor*> actors{ a, RE::PlayerCharacter::GetSingleton() };
+			CallStatic(
+				"OLibrary", "GetRandomSceneWithAction",
+				[id, done](const RE::BSScript::Variable& v) {
+					const std::string scene = v.IsString() ? std::string(v.GetString()) : std::string();
+					auto npc = RE::TESForm::LookupByID<RE::Actor>(id);
+					if (!npc) {
+						return;
+					}
+					std::vector<RE::Actor*> act{ npc, RE::PlayerCharacter::GetSingleton() };
+					CallStatic(
+						"OThread", "QuickStart",
+						[done](const RE::BSScript::Variable& t) {
+							const int tid = t.IsInt() ? t.GetSInt() : -1;
+							if (tid < 0) {
+								Notify("OStim のシーンを始められませんでした");
+								return;
+							}
+							WaitWhile([tid](std::function<void(bool)> a_answer) {
+								CallStatic("OThread", "IsRunning", [a_answer](const RE::BSScript::Variable& r) { a_answer(r.IsBool() && r.GetBool()); }, static_cast<std::int32_t>(tid));
+							},
+								done);
+						},
+						act, scene, static_cast<RE::TESObjectREFR*>(nullptr));
+				},
+				actors, std::string("vaginalsex"));
+			return;
+		}
+		auto sl = RE::TESDataHandler::GetSingleton()->LookupForm<RE::TESQuest>(0xD62, "SexLab.esm");
+		if (!sl) {
+			Fade(3.0f);
+			Later(2.0f, done);
+			return;
+		}
+		RE::Actor* none = nullptr;
+		CallMethod(sl, "SexLabFramework", "QuickStart",
+			[id, done](const RE::BSScript::Variable&) {
+				Later(4.0f, [id, done] {
+					WaitWhile([id](std::function<void(bool)> a_answer) {
+						auto sl2 = RE::TESDataHandler::GetSingleton()->LookupForm<RE::TESQuest>(0xD62, "SexLab.esm");
+						CallMethod(sl2, "SexLabFramework", "IsActorActive", [a_answer](const RE::BSScript::Variable& r) { a_answer(r.IsBool() && r.GetBool()); },
+							RE::TESForm::LookupByID<RE::Actor>(id));
+					},
+						done);
+				});
+			},
+			static_cast<RE::Actor*>(RE::PlayerCharacter::GetSingleton()), a, none, none, none, none, std::string("BFHNight"), std::string("Vaginal"));
+	}
+	void NightChooseHide()
+	{
+		auto msg = RE::TESForm::LookupByID(Own(PoolData::kNightHideMsg));
+		if (!msg) {
+			return;
+		}
+		CallMethod(msg, "Message", "Show",
+			[](const RE::BSScript::Variable& v) {
+				const int b = v.IsInt() ? v.GetSInt() : 0;
+				g_night.place = static_cast<std::uint8_t>(b + 1);
+				auto vial = NightFindVial();
+				if (!vial) {
+					return;
+				}
+				if (g_night.place == 4) {
+					g_hideOnly = true;
+					StartInsert(vial->GetFormID());
+				} else if (g_night.place == 5) {
+					RE::PlayerCharacter::GetSingleton()->RemoveItem(vial, 1, RE::ITEM_REMOVE_REASON::kRemove, nullptr, nullptr);
+					g_night.vial = vial->GetFormID();
+					Notify("小瓶を布に包み、門の外の茂みの根元に埋めた。あとで掘り出せばいい");
+				} else {
+					static const char* where[] = { "", "ブーツの中敷きの下に滑り込ませた", "コルセットの縫い目に押し込んだ", "結い上げた髪の奥に挿した" };
+					Notify(std::string("小瓶を") + where[g_night.place]);
+				}
+			},
+			0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
+	}
+	void NightCaught(RE::Actor* a_guard)
+	{
+		auto pc = RE::PlayerCharacter::GetSingleton();
+		std::string who = a_guard ? a_guard->GetDisplayFullName() : "見張り";
+		if (g_night.method == 2) {
+			if (auto vial = NightFindVial()) {
+				pc->RemoveItem(vial, 1, RE::ITEM_REMOVE_REASON::kRemove, nullptr, nullptr);
+			}
+			Notify(who + "「待て。……なんだ、この小瓶は。ボラクの匂いがするぞ」");
+		} else {
+			Notify(who + "「待て。……その匂い、ボラクの寝所から来たな。娼婦の真似事か」");
+		}
+		Fade(3.0f);
+		Later(1.5f, [] {
+			if (auto keep = GorekOrKeep()) {
+				CallMethod(RE::PlayerCharacter::GetSingleton(), "ObjectReference", "MoveTo", nullptr, keep, 2600.0f, 0.0f, 0.0f, true);
+			}
+			Notify("要塞から叩き出された。ボラクも族長に叱責されたらしい。……数日は近づけない");
+		});
+		g_night.vial = 0;
+		g_night.method = 0;
+		g_night.place = 0;
+		g_night.retryAt = static_cast<float>(GameDays()) + 2.0f;
+		NightStage(35);
+	}
+	void NightEscaped()
+	{
+		auto pc = RE::PlayerCharacter::GetSingleton();
+		// hidden inside her, the seal may have given way on the run: then it is in her, not in the bottle
+		static std::mt19937 s_rng{ std::random_device{}() };
+		if (g_night.vial && g_night.place == 4 && std::uniform_real_distribution<float>(0, 1)(s_rng) < 0.35f) {
+			auto d = DnaByItem(g_night.vial);
+			auto owner = d ? RE::TESForm::LookupByID<RE::Actor>(d->owner) : nullptr;
+			auto ctrl = RE::TESDataHandler::GetSingleton()->LookupForm<RE::TESQuest>(0x182A, "BeeingFemale.esm");
+			if (owner && ctrl) {
+				const float amount = d->tier >= 100 ? 1.0f : (d->tier >= 50 ? 0.6f : 0.35f);
+				CallMethod(ctrl, "FWController", "AddSperm", nullptr, static_cast<RE::Actor*>(pc), owner, amount);
+			}
+			g_night.vial = 0;
+			Blush(30.0f);
+			Notify("……走っている間に、小瓶の封が緩んでいた。中身はもう瓶の中にはない");
+		}
+		if (g_night.vial) {
+			if (auto item = RE::TESForm::LookupByID<RE::TESBoundObject>(g_night.vial)) {
+				pc->AddObjectToContainer(item, nullptr, 1, nullptr);
+			}
+			Notify(g_night.place == 5 ? "茂みの根元から小瓶を掘り出した" : "隠していた小瓶を取り出した");
+			g_night.vial = 0;
+		}
+		if (auto gold = RE::TESForm::LookupByID<RE::TESBoundObject>(0x00000F)) {
+			pc->AddObjectToContainer(gold, nullptr, 500, nullptr);
+		}
+		Blush(15.0f);
+		NightStage(100);
+	}
+	void CheckNight()
+	{
+		if (!HasLordbound()) {
+			return;
+		}
+		auto        pc = RE::PlayerCharacter::GetSingleton();
+		const float now = static_cast<float>(GameDays());
+		// the offer: Imperial / Stormcloak envoy, while the chief's deal stands and no child is on the way
+		if (g_night.stage == 0 && !g_night.offered && (g_pact.route == 1 || g_pact.route == 2) && g_pact.stage >= 30 && g_pact.stage < 45 && !g_pact.escaped) {
+			if (g_night.offerAt <= 0.0f) {
+				g_night.offerAt = now + 0.5f;
+			} else if (now >= g_night.offerAt && !pc->IsInCombat()) {
+				g_night.offered = 1;
+				if (auto msg = RE::TESForm::LookupByID(Own(PoolData::kNightStartMsg))) {
+					CallMethod(msg, "Message", "Show",
+						[](const RE::BSScript::Variable& v) {
+							if ((v.IsInt() ? v.GetSInt() : 1) == 0) {
+								NightBorak();
+								NightStage(10);
+							}
+						},
+						0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
+				}
+			}
+		}
+		if (g_night.stage == 35 && now >= g_night.retryAt) {
+			NightBorak();
+			NightStage(10);
+		}
+		// a bottle: wait until she holds it, then hide it
+		if (g_night.stage == 25 && NightFindVial()) {
+			g_night.method = 2;
+			g_night.t0 = now;
+			NightStage(30);
+			Later(1.0f, [] { NightChooseHide(); });
+		}
+		if (g_night.stage != 30) {
+			return;
+		}
+		// out of the stronghold: done
+		auto keep = GorekOrKeep();
+		if (keep && pc->GetParentCell() && !pc->GetParentCell()->IsInteriorCell() && pc->GetPosition().GetDistance(keep->GetPosition()) > 4200.0f) {
+			NightEscaped();
+			return;
+		}
+		// the watch: an orc who sees her may stop her (scent grows for two hours; sneaking halves the reach)
+		if (now - g_night.lastCheck < 6.0f / 86400.0f * 10.0f) {  // about every 6 real seconds
+			return;
+		}
+		g_night.lastCheck = now;
+		const float scent = std::clamp((now - g_night.t0) * 12.0f, 0.0f, 1.0f);
+		float       reach = g_night.method == 1 ? 350.0f + 900.0f * scent : 550.0f;
+		if (pc->IsSneaking()) {
+			reach *= 0.5f;
+		}
+		static constexpr float kFind[] = { 0.0f, 0.35f, 0.25f, 0.3f, 0.0f, 0.0f };  // by hiding place
+		const float find = g_night.method == 1 ? 0.25f + 0.5f * scent : kFind[std::min<int>(g_night.place, 5)];
+		auto pl = RE::ProcessLists::GetSingleton();
+		static std::mt19937 rng{ std::random_device{}() };
+		for (auto& h : pl->highActorHandles) {
+			auto ap = h.get();
+			auto a = ap.get();
+			if (!a || a->IsDead() || a->GetFormID() == g_pact.borak || !IsOrc(a) || a->IsPlayerTeammate()) {
+				continue;
+			}
+			if (a->GetPosition().GetDistance(pc->GetPosition()) > reach) {
+				continue;
+			}
+			bool los = false;
+			if (!a->HasLineOfSight(pc, los) || !los) {
+				continue;
+			}
+			if (std::uniform_real_distribution<float>(0, 1)(rng) < find) {
+				NightCaught(a);
+			} else {
+				Notify(std::string(a->GetDisplayFullName()) + "がこちらをじろりと見た。……何も言わずに行かせてくれた");
+			}
+			return;
+		}
+	}
+
 	// the camera sinks toward her lower belly, then the film takes over: as if looking inside
 	void WombCinematic(std::wstring a_name, std::wstring a_fallback)
 	{
@@ -3364,6 +3708,7 @@ namespace
 			CheckEggs();
 			CheckBal();
 			CheckPact();
+			CheckNight();
 			UpdateWomb();
 			CheckMood();
 			UpdateFetus();
@@ -3485,6 +3830,9 @@ namespace
 		if (a_ser->OpenRecord('PACT', 2)) {
 			a_ser->WriteRecordData(g_pact);
 		}
+		if (a_ser->OpenRecord('NGHT', 1)) {
+			a_ser->WriteRecordData(g_night);
+		}
 		if (!a_ser->OpenRecord(kSerDna, 1)) {
 			return;
 		}
@@ -3530,6 +3878,7 @@ namespace
 		g_bal = BalState{};
 		g_balx = BalExtra{};
 		g_pact = PactState{};
+		g_night = NightState{};
 		g_balShown = -1;
 		for (auto& d : g_dna) {
 			if (d.tier) {
@@ -3560,6 +3909,11 @@ namespace
 			}
 			if (type == kSerBal) {
 				a_ser->ReadRecordData(g_bal);
+				continue;
+			}
+			if (type == 'NGHT') {
+				g_night = NightState{};
+				a_ser->ReadRecordData(&g_night, std::min<std::uint32_t>(length, sizeof(NightState)));
 				continue;
 			}
 			if (type == 'PACT') {
