@@ -78,6 +78,15 @@
           "text": "採取"
         },
         {
+          "id": "bSoloScene:DNA",
+          "text": "採取を SexLab／OStim のシーンで行う",
+          "type": "toggle",
+          "help": "オン：「自分でしてもらう」も SexLab／OStim のシーンで再生。OStrands・OCum・3D CumFX などの見た目がそのまま出る。オフ：SGO4 のアニメーション",
+          "valueOptions": {
+            "sourceType": "ModSettingBool"
+          }
+        },
+        {
           "id": "iAssistFramework:DNA",
           "text": "「手伝ってあげる」に使うもの",
           "type": "enum",
@@ -93,9 +102,9 @@
         },
         {
           "id": "bUseOCum:DNA",
-          "text": "OCum Ascended と連動",
+          "text": "挿入後に OCum の見た目を付ける",
           "type": "toggle",
-          "help": "採取の濃さを OCum の蓄積量で決め、採取後は空になる。挿入後に OCum の見た目を付ける",
+          "help": "精液の瓶を入れたあと、OCum Ascended の見た目（メッシュ／オーバーレイ）を付ける。OCum の設定に従う",
           "valueOptions": {
             "sourceType": "ModSettingBool"
           }
