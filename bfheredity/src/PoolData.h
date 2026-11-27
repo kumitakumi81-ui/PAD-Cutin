@@ -69,5 +69,7 @@ inline constexpr std::uint32_t kContraceptive = 0x8E9;
 inline constexpr std::uint32_t kPositiveTest = 0x8EA;
 inline constexpr std::uint32_t kFatherFaction = 0x8EB;
 inline constexpr std::uint32_t kAssistInfo = 0x8F2;
+inline constexpr std::uint32_t kLiveEgg = 0x8F9;
+inline constexpr std::uint32_t kVermifuge = 0x8FA;
 inline constexpr std::uint32_t kTellInfos[] = {0x8F5, 0x8F6, 0x8F7, 0x8F8};
 }

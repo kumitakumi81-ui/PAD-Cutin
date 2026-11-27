@@ -55,7 +55,13 @@ namespace
 		bool          softAbs = true;           // while pregnant, take the abs morphs back (Skill Based Muscle's + the ones built into the body)
 		float         bakedAbs = 1.0f;          // MuscleAbs / MuscleMoreAbs_v2 built into the body in BodySlide (Wonder Woman preset = 1.0)
 		float         softAbsStrength = 1.0f;   // 1 = flat at the last stage
-		bool          soloScene = true;         // "collect" plays a SexLab / OStim solo scene (OStrands etc. draw it) instead of Soulgem Oven's animation
+		bool          soloScene = true;
+		// live chaurus egg
+		bool          liveEgg = true;           // the item drops at all
+		float         eggSacChance = 0.15f;     // harvesting a chaurus egg sac also gives a live egg
+		float         eggKillChance = 0.10f;    // a chaurus the player kills carries one
+		float         eggDays = 5.0f;           // days she carries them (without Estrus Unified)
+		std::int32_t  eggCount = 3;             // eggs she lays         // "collect" plays a SexLab / OStim solo scene (OStrands etc. draw it) instead of Soulgem Oven's animation
 		int           assistFramework = 0;      // "help him" collection: 0 = OStim if loaded else SexLab, 1 = SexLab, 2 = OStim
 		bool          naturalConception = true;  // the DNA goes in as Beeing Female sperm: a child only when she ovulates (BF's own rules)
 		float         testMinDays = 1.0f;        // a pregnancy test shows positive this many days after conception
@@ -170,6 +176,16 @@ namespace
 				g_settings.bakedAbs = static_cast<float>(std::atof(val.c_str()));
 			} else if (key == "fsoftabsstrength") {
 				g_settings.softAbsStrength = static_cast<float>(std::atof(val.c_str()));
+			} else if (key == "bliveegg") {
+				g_settings.liveEgg = b();
+			} else if (key == "feggsacchance") {
+				g_settings.eggSacChance = static_cast<float>(std::atof(val.c_str()));
+			} else if (key == "feggkillchance") {
+				g_settings.eggKillChance = static_cast<float>(std::atof(val.c_str()));
+			} else if (key == "feggdays") {
+				g_settings.eggDays = static_cast<float>(std::atof(val.c_str()));
+			} else if (key == "ieggcount") {
+				g_settings.eggCount = std::atoi(val.c_str());
 			} else if (key == "bsoloscene") {
 				g_settings.soloScene = b();
 			} else if (key == "buseocum") {
@@ -1266,8 +1282,184 @@ namespace
 		});
 	}
 
+	// ------------------------------------------------------------------ live chaurus egg
+	// Estrus Unified (when installed) carries them: its own belly, eggs moving, laying, hatchlings. Without it a
+	// simple version: the belly grows for eggDays, then she lays eggCount chaurus eggs.
+	double g_eggStart = 0.0, g_eggDue = 0.0;  // game days (co-save); 0 = not carrying (simple version)
+	float  g_eggMorph = -1.0f;
+
+	bool HasEstrusUnified() { return RE::TESDataHandler::GetSingleton()->LookupModByName("EstrusUnified.esp") != nullptr; }
+
+	bool IsChaurus(RE::Actor* a)
+	{
+		auto r = a ? a->GetRace() : nullptr;
+		if (!r) {
+			return false;
+		}
+		auto dh = RE::TESDataHandler::GetSingleton();
+		static const std::pair<RE::FormID, const char*> kRaces[] = {
+			{ 0x131EB, "Skyrim.esm" }, { 0xA5601, "Skyrim.esm" }, { 0x15136, "Dawnguard.esm" }, { 0x51FB, "Dawnguard.esm" }
+		};
+		for (auto& [id, plugin] : kRaces) {
+			if (dh->LookupForm(id, plugin) == r) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	void EggMorph(float a_value)
+	{
+		if (std::abs(a_value - g_eggMorph) < 0.04f) {
+			return;
+		}
+		g_eggMorph = a_value;
+		auto ref = static_cast<RE::TESObjectREFR*>(RE::PlayerCharacter::GetSingleton());
+		if (a_value <= 0.0f) {
+			CallStatic("NiOverride", "ClearBodyMorph", nullptr, ref, std::string("PregnancyBelly"), std::string("BFHeredity.Egg"));
+		} else {
+			CallStatic("NiOverride", "SetBodyMorph", nullptr, ref, std::string("PregnancyBelly"), std::string("BFHeredity.Egg"), a_value);
+		}
+		CallStatic("NiOverride", "UpdateModelWeight", nullptr, ref);
+	}
+
+	void LayEggsSimple(int a_count)
+	{
+		g_eggStart = g_eggDue = 0.0;
+		EggMorph(0.0f);
+		auto pc = RE::PlayerCharacter::GetSingleton();
+		if (auto eggs = RE::TESDataHandler::GetSingleton()->LookupForm<RE::TESBoundObject>(0x3AD56, "Skyrim.esm"); eggs && a_count > 0) {
+			pc->AddObjectToContainer(eggs, nullptr, a_count, nullptr);
+		}
+		Notify(a_count > 0 ? "シャウラスの卵を産み落とした……" : "卵が流れ出た……");
+		Log("egg: laid {} (simple)", a_count);
+	}
+
+	void CarryEggs()
+	{
+		auto pc = RE::PlayerCharacter::GetSingleton();
+		auto simple = [] {
+			LoadSettings(false);
+			g_eggStart = GameDays();
+			g_eggDue = g_eggStart + std::max(0.5f, g_settings.eggDays);
+			g_eggMorph = -1.0f;
+			EggMorph(0.05f);
+			Notify("お腹の奥で、卵がかすかに動いた……");
+			Log("egg: carrying (simple), lays on day {:.2f}", g_eggDue);
+		};
+		if (g_eggDue > 0.0) {
+			Notify("もう卵を宿している");
+			return;
+		}
+		if (!HasEstrusUnified()) {
+			simple();
+			return;
+		}
+		CallStatic(
+			"EstrusUnifiedAPI", "RequestPregnancy",
+			[simple](const RE::BSScript::Variable& v) {
+				if (v.IsBool() && v.GetBool()) {
+					Notify("お腹の奥で、卵がかすかに動いた……");
+					Log("egg: carrying (Estrus Unified)");
+				} else {
+					Log("egg: Estrus Unified said no, simple version");
+					simple();
+				}
+			},
+			static_cast<RE::Actor*>(pc), static_cast<std::int32_t>(1));
+	}
+
+	void UseVermifuge()
+	{
+		if (g_eggDue > 0.0) {
+			LayEggsSimple(1);  // they come out early and few
+			return;
+		}
+		if (!HasEstrusUnified()) {
+			Notify("何も起こらなかった");
+			return;
+		}
+		auto pc = RE::PlayerCharacter::GetSingleton();
+		CallStatic(
+			"EstrusUnifiedAPI", "GetPregnancyType",
+			[](const RE::BSScript::Variable& v) {
+				const int type = v.IsInt() ? v.GetSInt() : 0;
+				if (type <= 0) {
+					Notify("何も起こらなかった");
+					return;
+				}
+				CallStatic("EstrusUnifiedAPI", "PlayBirth", nullptr, static_cast<RE::Actor*>(RE::PlayerCharacter::GetSingleton()), static_cast<std::int32_t>(type), static_cast<std::int32_t>(1));
+				Log("egg: vermifuge, Estrus Unified birth (type {})", type);
+			},
+			static_cast<RE::Actor*>(pc));
+	}
+
+	void CheckEggs()
+	{
+		if (g_eggDue <= 0.0) {
+			return;
+		}
+		const double now = GameDays();
+		if (now >= g_eggDue) {
+			LoadSettings(false);
+			LayEggsSimple(std::max(1, g_settings.eggCount));
+			return;
+		}
+		const double span = std::max(0.01, g_eggDue - g_eggStart);
+		EggMorph(static_cast<float>(std::clamp((now - g_eggStart) / span, 0.05, 1.0)));
+	}
+
+	// where live eggs come from: an egg sac's harvest, a chaurus the player kills
+	class EggSourceSink : public RE::BSTEventSink<RE::TESContainerChangedEvent>, public RE::BSTEventSink<RE::TESDeathEvent>
+	{
+	public:
+		RE::BSEventNotifyControl ProcessEvent(const RE::TESContainerChangedEvent* a_event, RE::BSTEventSource<RE::TESContainerChangedEvent>*) override
+		{
+			if (!a_event || a_event->newContainer != 0x14 || a_event->oldContainer != 0 || a_event->baseObj != 0x3AD56) {
+				return RE::BSEventNotifyControl::kContinue;
+			}
+			SKSE::GetTaskInterface()->AddTask([] {
+				LoadSettings(false);
+				static std::mt19937 rng{ std::random_device{}() };
+				if (!g_settings.liveEgg || std::uniform_real_distribution<float>(0, 1)(rng) >= g_settings.eggSacChance) {
+					return;
+				}
+				if (auto egg = RE::TESForm::LookupByID<RE::TESBoundObject>(Own(PoolData::kLiveEgg))) {
+					RE::PlayerCharacter::GetSingleton()->AddObjectToContainer(egg, nullptr, 1, nullptr);
+					Log("egg: from a sac");
+				}
+			});
+			return RE::BSEventNotifyControl::kContinue;
+		}
+		RE::BSEventNotifyControl ProcessEvent(const RE::TESDeathEvent* a_event, RE::BSTEventSource<RE::TESDeathEvent>*) override
+		{
+			if (!a_event || !a_event->dead || !a_event->actorDying || !a_event->actorKiller || !a_event->actorKiller->IsPlayerRef()) {
+				return RE::BSEventNotifyControl::kContinue;
+			}
+			const RE::FormID who = a_event->actorDying->GetFormID();
+			SKSE::GetTaskInterface()->AddTask([who] {
+				auto a = RE::TESForm::LookupByID<RE::Actor>(who);
+				LoadSettings(false);
+				static std::mt19937 rng{ std::random_device{}() };
+				if (!a || !g_settings.liveEgg || !IsChaurus(a) || std::uniform_real_distribution<float>(0, 1)(rng) >= g_settings.eggKillChance) {
+					return;
+				}
+				if (auto egg = RE::TESForm::LookupByID<RE::TESBoundObject>(Own(PoolData::kLiveEgg))) {
+					a->AddObjectToContainer(egg, nullptr, 1, nullptr);
+					Log("egg: in a chaurus {:08X}", who);
+				}
+			});
+			return RE::BSEventNotifyControl::kContinue;
+		}
+	};
+	EggSourceSink g_eggSources;
+
 	bool UsePregnancyItem(RE::FormID a_item)
 	{
+		if (a_item == Own(PoolData::kVermifuge)) {
+			UseVermifuge();
+			return true;
+		}
 		if (a_item == Own(PoolData::kDrugInstant)) {
 			UseDrugInstant();
 		} else if (a_item == Own(PoolData::kDrugGentle)) {
@@ -1448,6 +1640,11 @@ namespace
 		// insertion: animation (when registered), voice, camera, then it is in after insertSeconds
 		static std::mt19937 s_rng{ std::random_device{}() };
 		const char*         insertAnim = (s_rng() & 1) ? "dse-sgo-insert02-01" : "dse-sgo-insert01-01";
+		const bool          egg = a_item == Own(PoolData::kLiveEgg);
+		auto                anio = RE::TESDataHandler::GetSingleton()->LookupForm<RE::TESObjectANIO>(0x8E5, kPlugin);
+		if (anio) {
+			anio->SetModel(egg ? "BFHeredity\\AobjChaurusEgg.nif" : "BFHeredity\\AobjSemenBottle.nif");
+		}
 		const bool          anim = Anim(pc, insertAnim);
 		HoldPlayer(true);
 		g_inserting = true;
@@ -1458,7 +1655,9 @@ namespace
 		Later(g_settings.insertSeconds, [a_item, anim, camLen] {
 			g_inserting = false;
 			Voice(RE::PlayerCharacter::GetSingleton(), Heat::kHot);
-			if (auto d = DnaByItem(a_item)) {
+			if (a_item == Own(PoolData::kLiveEgg)) {
+				CarryEggs();
+			} else if (auto d = DnaByItem(a_item)) {
 				InjectDna(*d);
 				// OCum's look of it on her (its mesh / overlay, by OCum's own settings)
 				if (auto om = g_settings.useOCum ? RE::TESDataHandler::GetSingleton()->LookupForm<RE::TESQuest>(0xF38, "OCum.esp") : nullptr) {
@@ -1489,7 +1688,7 @@ namespace
 				if (UsePregnancyItem(item)) {
 					return;
 				}
-				if (DnaByItem(item)) {
+				if (DnaByItem(item) || item == Own(PoolData::kLiveEgg)) {
 					g_pendingDna.push_back(item);  // played once the inventory is closed
 				}
 			});
@@ -1635,6 +1834,7 @@ namespace
 		if (g_ready) {
 			CheckOvulation();
 			CheckGentleDrug();
+			CheckEggs();
 		}
 		if (!g_ready || g_slots.empty()) {
 			return;
@@ -1709,6 +1909,7 @@ namespace
 	constexpr std::uint32_t kSerSlots = 'SLOT';
 	constexpr std::uint32_t kSerDna = 'DNAS';
 	constexpr std::uint32_t kSerCycle = 'OVUL';
+	constexpr std::uint32_t kSerEggs = 'EGGS';
 
 	void OnSave(SKSE::SerializationInterface* a_ser)
 	{
@@ -1737,6 +1938,10 @@ namespace
 		}
 		if (a_ser->OpenRecord(kSerCycle, 1)) {
 			a_ser->WriteRecordData(g_ovulationDue);
+		}
+		if (a_ser->OpenRecord(kSerEggs, 1)) {
+			a_ser->WriteRecordData(g_eggStart);
+			a_ser->WriteRecordData(g_eggDue);
 		}
 		if (!a_ser->OpenRecord(kSerDna, 1)) {
 			return;
@@ -1778,6 +1983,8 @@ namespace
 		g_namingQueue.clear();
 		g_prompting = false;
 		g_ovulationDue = 0.0;
+		g_eggStart = g_eggDue = 0.0;
+		g_eggMorph = -1.0f;
 		for (auto& d : g_dna) {
 			if (d.tier) {
 				if (auto f = RE::TESForm::LookupByID<RE::AlchemyItem>(d.item)) {
@@ -1803,6 +2010,11 @@ namespace
 		while (a_ser->GetNextRecordInfo(type, version, length)) {
 			if (type == kSerCycle) {
 				a_ser->ReadRecordData(g_ovulationDue);
+				continue;
+			}
+			if (type == kSerEggs) {
+				a_ser->ReadRecordData(g_eggStart);
+				a_ser->ReadRecordData(g_eggDue);
 				continue;
 			}
 			if (type == kSerDna) {
@@ -1915,6 +2127,8 @@ namespace
 			if (auto holder = RE::ScriptEventSourceHolder::GetSingleton()) {
 				holder->AddEventSink<RE::TESEquipEvent>(&g_equip);
 				holder->AddEventSink<RE::TESTopicInfoEvent>(&g_topic);
+				holder->AddEventSink<RE::TESContainerChangedEvent>(&g_eggSources);
+				holder->AddEventSink<RE::TESDeathEvent>(&g_eggSources);
 			}
 			if (auto idm = RE::BSInputDeviceManager::GetSingleton()) {
 				idm->AddEventSink(&g_input);
