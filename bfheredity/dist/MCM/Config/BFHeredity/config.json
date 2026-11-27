@@ -111,6 +111,74 @@
       ]
     },
     {
+      "pageDisplayName": "胎のHUD",
+      "content": [
+        {
+          "type": "header",
+          "text": "胎のHUD"
+        },
+        {
+          "id": "bWombHud:Hud",
+          "text": "胎のHUDを表示",
+          "type": "toggle",
+          "help": "画面の隅に、周期・胎内の様子・誰の子かを表示します。排卵や受精の文字演出も出ます",
+          "valueOptions": {
+            "sourceType": "ModSettingBool"
+          }
+        },
+        {
+          "id": "fHudScale:Hud",
+          "text": "大きさ",
+          "type": "slider",
+          "help": "HUDの大きさ",
+          "valueOptions": {
+            "min": 0.5,
+            "max": 2.0,
+            "step": 0.05,
+            "formatString": "{2}",
+            "sourceType": "ModSettingFloat"
+          }
+        },
+        {
+          "id": "iHudCorner:Hud",
+          "text": "位置",
+          "type": "enum",
+          "help": "HUDを置く画面の隅",
+          "valueOptions": {
+            "options": [
+              "左下",
+              "右下",
+              "左上",
+              "右上"
+            ],
+            "sourceType": "ModSettingInt"
+          }
+        },
+        {
+          "type": "header",
+          "text": "表情"
+        },
+        {
+          "id": "bMoodFace:Hud",
+          "text": "興奮すると上気した表情",
+          "type": "toggle",
+          "help": "興奮度（OSL Aroused）が70を超えると、頬を染めた表情になります",
+          "valueOptions": {
+            "sourceType": "ModSettingBool"
+          }
+        },
+        {
+          "id": "bShameFace:Hud",
+          "text": "裸を見られると恥じらう",
+          "type": "toggle",
+          "help": "服を着ていない時に近くに人がいると、恥ずかしそうな表情と赤面になります",
+          "valueOptions": {
+            "sourceType": "ModSettingBool"
+          }
+        }
+      ]
+    },
+    {
       "pageDisplayName": "妊娠",
       "content": [
         {
@@ -274,6 +342,15 @@
             "step": 0.5,
             "formatString": "{1}",
             "sourceType": "ModSettingFloat"
+          }
+        },
+        {
+          "id": "bSpiritAllies:Bal",
+          "text": "カレンたちの魂と共に戦う",
+          "type": "toggle",
+          "help": "バルの烙印（警戒者の道）：Vigilant の「無限落下」を終えると、コールドハーバーのモラグ・バル戦でカレン、リリアン、タラニスの魂が加勢します",
+          "valueOptions": {
+            "sourceType": "ModSettingBool"
           }
         }
       ]
