@@ -50,6 +50,7 @@ namespace
 		bool          inherit = true;
 		bool          nameOnBirth = true;
 		std::uint32_t renameKey = 0x31;  // N
+		bool          useOCum = true;           // OCum Ascended: grade from his stored amount, he is spent after; its look on her after insertion
 		int           assistFramework = 0;      // "help him" collection: 0 = OStim if loaded else SexLab, 1 = SexLab, 2 = OStim
 		bool          naturalConception = true;  // the DNA goes in as Beeing Female sperm: a child only when she ovulates (BF's own rules)
 		float         testMinDays = 1.0f;        // a pregnancy test shows positive this many days after conception
@@ -156,6 +157,8 @@ namespace
 				g_settings.cutinPlayer = g_settings.camera;
 			} else if (key == "finsertcamerazoom") {
 				g_settings.insertCameraZoom = static_cast<float>(std::atof(val.c_str()));
+			} else if (key == "buseocum") {
+				g_settings.useOCum = b();
 			} else if (key == "iassistframework") {
 				g_settings.assistFramework = std::atoi(val.c_str());
 			} else if (key == "bnaturalconception") {
@@ -999,7 +1002,9 @@ namespace
 		});
 	}
 
-	void GiveDna(RE::FormID id)
+	float g_virOverride = -1.0f;  // OCum's stored share for the next GiveDnaBF (-1 = ask Beeing Female)
+
+	void GiveDnaBF(RE::FormID id)
 	{
 		auto a = RE::TESForm::LookupByID<RE::Actor>(id);
 		if (!a) {
@@ -1013,7 +1018,8 @@ namespace
 				if (!a) {
 					return;
 				}
-				const float vir = v.IsFloat() ? v.GetFloat() : 1.0f;
+				const float vir = g_virOverride >= 0.0f ? g_virOverride : (v.IsFloat() ? v.GetFloat() : 1.0f);
+				g_virOverride = -1.0f;
 				const std::uint8_t tier = vir >= g_settings.virility100 ? 100 : (vir >= g_settings.virility50 ? 50 : 30);
 				// one item per NPC and grade
 				Dna* d = nullptr;
@@ -1066,6 +1072,41 @@ namespace
 		if (!ok) {
 			Notify("Beeing Female が見つからないため、採取できません");
 		}
+	}
+
+	// OCum Ascended keeps how much a man has stored (it refills with time, OStim scenes use it up): when it is there, the
+	// grade comes from his share of it and collecting empties him; otherwise Beeing Female's virility decides
+	RE::TESQuest* OCumQuest() { return RE::TESDataHandler::GetSingleton()->LookupForm<RE::TESQuest>(0x800, "OCum.esp"); }
+
+	void GiveDna(RE::FormID id)
+	{
+		auto a = RE::TESForm::LookupByID<RE::Actor>(id);
+		auto oc = g_settings.useOCum ? OCumQuest() : nullptr;
+		if (!a || !oc) {
+			GiveDnaBF(id);
+			return;
+		}
+		CallMethod(
+			oc, "OCumScript", "GetCumStoredAmount",
+			[id](const RE::BSScript::Variable& v) {
+				const float stored = v.IsFloat() ? v.GetFloat() : -1.0f;
+				CallMethod(
+					OCumQuest(), "OCumScript", "GetMaxCumStoragePossible",
+					[id, stored](const RE::BSScript::Variable& m) {
+						const float mx = m.IsFloat() ? m.GetFloat() : 0.0f;
+						auto        a = RE::TESForm::LookupByID<RE::Actor>(id);
+						if (stored < 0.0f || mx <= 0.0f || !a) {
+							GiveDnaBF(id);
+							return;
+						}
+						g_virOverride = std::clamp(stored / mx, 0.0f, 1.0f);
+						Log("OCum: {:08X} has {:.1f} of {:.1f} ml", id, stored, mx);
+						GiveDnaBF(id);
+						CallMethod(OCumQuest(), "OCumScript", "AdjustStoredCumAmount", nullptr, a, -stored, stored);  // he is spent
+					},
+					a);
+			},
+			a);
 	}
 
 	void InjectDna(Dna& d)
@@ -1421,6 +1462,11 @@ namespace
 			Voice(RE::PlayerCharacter::GetSingleton(), Heat::kHot);
 			if (auto d = DnaByItem(a_item)) {
 				InjectDna(*d);
+				// OCum's look of it on her (its mesh / overlay, by OCum's own settings)
+				if (auto om = g_settings.useOCum ? RE::TESDataHandler::GetSingleton()->LookupForm<RE::TESQuest>(0xF38, "OCum.esp") : nullptr) {
+					const std::int32_t intensity = d->tier >= 100 ? 4 : (d->tier >= 50 ? 2 : 1);
+					CallMethod(om, "OCumMaleScript", "ApplyCumVaginal", nullptr, static_cast<RE::Actor*>(RE::PlayerCharacter::GetSingleton()), intensity, static_cast<std::int32_t>(0));
+				}
 			}
 			Later(std::max(1.0f, camLen - g_settings.insertSeconds), [anim] {
 				if (anim) {
