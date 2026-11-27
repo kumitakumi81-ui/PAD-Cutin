@@ -1900,6 +1900,200 @@ namespace
 	}
 
 	// where live eggs come from: an egg sac's harvest, a chaurus the player kills
+
+	// ------------------------------------------------------------------ 0.10: Blood Pact (Lordbound's Garshakur)
+	struct PactState
+	{
+		std::int32_t stage = 0;
+		float        armedDay = 0.0f;
+		float        snoozeUntil = 0.0f;
+		RE::FormID   captives[3]{};
+		RE::FormID   borak = 0;
+		RE::FormID   rival = 0;
+		std::uint8_t route = 0;  // 1 Imperial, 2 Stormcloak, 3 Orc
+		std::uint8_t partner = 0;  // 1 Gorek, 2 Borak
+		std::uint8_t talked = 0;   // 1 Eira, 2 Livia, 4 Helga
+		std::uint8_t escaped = 0;
+		std::uint8_t maiden = 0;
+	};
+	PactState g_pact;
+	constexpr const char* kLordbound = "Druadach.esm";
+	bool          HasLordbound() { return RE::TESDataHandler::GetSingleton()->LookupModByName(kLordbound) != nullptr; }
+	RE::TESQuest* PactQuest() { return RE::TESDataHandler::GetSingleton()->LookupForm<RE::TESQuest>(PoolData::kPactQuest, kPlugin); }
+	RE::Actor*    Gorek() { return RE::TESDataHandler::GetSingleton()->LookupForm<RE::Actor>(0x02FB3D, kLordbound); }
+	// Gorek, or the keep's marker when his reference is not loaded
+	RE::TESObjectREFR* GorekOrKeep()
+	{
+		if (auto g = Gorek()) {
+			return g;
+		}
+		return RE::TESDataHandler::GetSingleton()->LookupForm<RE::TESObjectREFR>(0x040973, kLordbound);
+	}
+	RE::TESFaction* OwnFaction(std::uint32_t a_id) { return RE::TESDataHandler::GetSingleton()->LookupForm<RE::TESFaction>(a_id, kPlugin); }
+	void          JoinFaction(RE::Actor* a, std::uint32_t a_id)
+	{
+		if (auto f = OwnFaction(a_id); a && f) {
+			CallMethod(a, "Actor", "AddToFaction", nullptr, f);
+		}
+	}
+	void PactStage(std::int32_t a_stage)
+	{
+		static constexpr std::int32_t kObj[] = { 5, 20, 25, 30, 35, 40, 42, 43, 45, 50 };
+		auto       q = PactQuest();
+		const auto has = [](std::int32_t st) { return std::find(std::begin(kObj), std::end(kObj), st) != std::end(kObj); };
+		if (q && has(g_pact.stage)) {
+			CallMethod(q, "Quest", "SetObjectiveCompleted", nullptr, g_pact.stage, true);
+		}
+		g_pact.stage = a_stage;
+		if (q) {
+			CallMethod(q, "Quest", "SetCurrentStageID", nullptr, a_stage);
+			if (has(a_stage)) {
+				CallMethod(q, "Quest", "SetObjectiveDisplayed", nullptr, a_stage, true, false);
+			}
+			if (a_stage == 150) {
+				CallMethod(q, "Quest", "CompleteQuest", nullptr);
+			}
+		}
+		Log("pact: stage {}", a_stage);
+	}
+	RE::TESObjectREFR* PlaceOwn(std::uint32_t a_npc, RE::TESObjectREFR* a_at, float a_dx, float a_dy)
+	{
+		auto npc = RE::TESDataHandler::GetSingleton()->LookupForm<RE::TESNPC>(a_npc, kPlugin);
+		if (!npc || !a_at) {
+			return nullptr;
+		}
+		auto ref = a_at->PlaceObjectAtMe(npc, false);
+		if (!ref) {
+			return nullptr;
+		}
+		CallMethod(ref.get(), "ObjectReference", "MoveTo", nullptr, a_at, a_dx, a_dy, 0.0f, true);
+		return ref.get();
+	}
+	void PactAbduct()
+	{
+		auto pc = RE::PlayerCharacter::GetSingleton();
+		JoinFaction(pc, g_pact.route == 1 ? PoolData::kPactImperial : g_pact.route == 2 ? PoolData::kPactStorm : PoolData::kPactOrc);
+		JoinFaction(Gorek(), PoolData::kPactChief);
+		Fade(3.5f);
+		PactStage(10);
+		Notify("襲撃隊の縄が手首に食い込む。他にも捕まった女たちがいる……");
+		Later(1.5f, [] {
+			auto pc = RE::PlayerCharacter::GetSingleton();
+			auto marker = RE::TESDataHandler::GetSingleton()->LookupForm<RE::TESObjectREFR>(0x081BD5, kLordbound);  // the stockade
+			if (!marker) {
+				return;
+			}
+			CallMethod(pc, "ObjectReference", "MoveTo", nullptr, marker, 0.0f, 0.0f, 0.0f, true);
+			Later(1.5f, [marker] {
+				const std::uint32_t who[3] = { PoolData::kPactEira, PoolData::kPactLivia, PoolData::kPactHelga };
+				for (int i = 0; i < 3; ++i) {
+					if (auto r = PlaceOwn(who[i], marker, -120.0f + 120.0f * i, 160.0f)) {
+						g_pact.captives[i] = r->GetFormID();
+					}
+				}
+				PactStage(20);
+			});
+		});
+	}
+	void PactSummoned()
+	{
+		Notify("オークの戦士が囲いの扉を開けた。「族長がお呼びだ」");
+		Later(2.0f, [] {
+			Fade(2.5f);
+			Later(1.2f, [] {
+				JoinFaction(Gorek(), PoolData::kPactChief);
+				if (auto g = GorekOrKeep()) {
+					CallMethod(RE::PlayerCharacter::GetSingleton(), "ObjectReference", "MoveTo", nullptr, g, 0.0f, -180.0f, 0.0f, true);
+				}
+				PactStage(30);
+			});
+		});
+	}
+	void PactEscape()
+	{
+		Fade(4.0f);
+		Notify("見張りの交代の隙に、エイラと崖を下りた。西へ、マルカルスへ……");
+		g_pact.escaped = 1;
+		Later(1.8f, [] {
+			if (auto hamal = RE::TESForm::LookupByID<RE::TESObjectREFR>(0x01E766)) {
+				CallMethod(RE::PlayerCharacter::GetSingleton(), "ObjectReference", "MoveTo", nullptr, hamal, 0.0f, -200.0f, 0.0f, true);
+			}
+			PactStage(25);
+		});
+	}
+	void PactCleanse()
+	{
+		CycleState([](int st) {
+			if (st >= 4 && st <= 7) {
+				Notify("「お腹の子が生まれてから、もう一度いらっしゃい。それまでここで休んで」");
+				return;
+			}
+			Fade(5.0f);
+			Blush(25.0f);
+			Later(2.5f, [] {
+				g_pact.maiden = 1;
+				PactStage(150);
+				Notify("香油と湯気の中で祈りが満ちる。……乙女の祝福を受けた");
+			});
+		});
+	}
+	void CheckPact()
+	{
+		if (!HasLordbound()) {
+			return;
+		}
+		auto pc = RE::PlayerCharacter::GetSingleton();
+		static bool s_elig = false;
+		if (!s_elig) {
+			s_elig = true;
+			JoinFaction(pc, PoolData::kPactEligible);
+		}
+		const float now = GameDays();
+		auto        dh = RE::TESDataHandler::GetSingleton();
+		if (g_pact.stage == 0 && g_pact.route == 0) {
+			auto orc = dh->LookupForm<RE::TESQuest>(0x05C571, kLordbound);
+			auto imp = dh->LookupForm<RE::TESQuest>(0x018784, kLordbound);
+			if (orc && orc->IsCompleted()) {
+				g_pact.route = 3;
+			} else if (imp && imp->IsCompleted()) {
+				g_pact.route = 1;
+			}
+			if (g_pact.route) {
+				g_pact.armedDay = now;
+				Log("pact: armed (route {})", g_pact.route);
+			}
+		}
+		// the raiders come while she is out in the Druadach mountains
+		if (((g_pact.stage == 0 && g_pact.route) || g_pact.stage == 5) && now >= g_pact.snoozeUntil &&
+			(g_pact.stage == 5 || now - g_pact.armedDay >= 0.5f) && !pc->IsInCombat() && pc->GetParentCell() && !pc->GetParentCell()->IsInteriorCell()) {
+			auto ws = pc->GetWorldspace();
+			auto file = ws ? ws->GetFile(0) : nullptr;
+			if (file && std::string_view(file->GetFilename()) == kLordbound) {
+				g_pact.snoozeUntil = now + 0.1f;
+				if (auto msg = RE::TESForm::LookupByID(Own(PoolData::kPactAbductMsg))) {
+					CallMethod(msg, "Message", "Show",
+						[](const RE::BSScript::Variable& v) {
+							if ((v.IsInt() ? v.GetSInt() : 1) == 0) {
+								PactAbduct();
+							} else {
+								g_pact.snoozeUntil = GameDays() + 3.0f;
+							}
+						},
+						0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
+				}
+			}
+		}
+		if (g_pact.stage == 45) {
+			CycleState([](int st) {
+				if (st >= 4 && st <= 7 && g_pact.stage == 45) {
+					Blush(25.0f);
+					Notify("下腹部に新しい命の気配がある。二つの民の血を引く子だ");
+					PactStage(50);
+				}
+			});
+		}
+	}
+
 	// failure route: a nightmare after DA10 failed
 	class BalSleepSink : public RE::BSTEventSink<RE::TESSleepStopEvent>
 	{
@@ -1957,6 +2151,12 @@ namespace
 				auto a = RE::TESForm::LookupByID<RE::Actor>(who);
 				if (a && IsVigilantMolagBal(a) && g_bal.qstage >= 70 && g_bal.qstage < 100) {
 					BalCure();
+					return;
+				}
+				if (a && g_pact.rival && a->GetFormID() == g_pact.rival && g_pact.stage == 43) {
+					g_pact.rival = 0;
+					Notify("ボラク「よくやった。これで誰も文句は言えん」");
+					PactStage(45);
 					return;
 				}
 				if (a && a->GetFormID() == g_balx.champRef && g_balx.champRef) {
@@ -2175,6 +2375,59 @@ namespace
 				return RE::BSEventNotifyControl::kContinue;
 			} else if (info == Own(PoolData::kBalMara)) {
 				Later(1.0f, [] { BalTrial(2, 42); });
+				return RE::BSEventNotifyControl::kContinue;
+			} else if (info == Own(PoolData::kPactOrder)) {
+				g_pact.route = 2;
+				PactStage(5);
+				return RE::BSEventNotifyControl::kContinue;
+			} else if (info == Own(PoolData::kPactEiraTalk) || info == Own(PoolData::kPactLiviaTalk) || info == Own(PoolData::kPactHelgaTalk)) {
+				g_pact.talked |= info == Own(PoolData::kPactEiraTalk) ? 1 : info == Own(PoolData::kPactLiviaTalk) ? 2 : 4;
+				if (g_pact.talked == 7 && g_pact.stage == 20) {
+					Later(3.0f, [] { PactSummoned(); });
+				}
+				return RE::BSEventNotifyControl::kContinue;
+			} else if (info == Own(PoolData::kPactEscape)) {
+				Later(1.0f, [] { PactEscape(); });
+				return RE::BSEventNotifyControl::kContinue;
+			} else if (info == Own(PoolData::kPactDeal1) || info == Own(PoolData::kPactDeal2) || info == Own(PoolData::kPactDeal3)) {
+				PactStage(35);
+				return RE::BSEventNotifyControl::kContinue;
+			} else if (info == Own(PoolData::kPactBlood)) {
+				PactStage(40);
+				Later(0.5f, [] {
+					if (!g_pact.borak) {
+						if (auto r = PlaceOwn(PoolData::kPactBorak, GorekOrKeep(), 200.0f, 0.0f)) {
+							g_pact.borak = r->GetFormID();
+						}
+					}
+				});
+				return RE::BSEventNotifyControl::kContinue;
+			} else if (info == Own(PoolData::kPactPickChief)) {
+				g_pact.partner = 1;
+				PactStage(42);
+				return RE::BSEventNotifyControl::kContinue;
+			} else if (info == Own(PoolData::kPactPickBorak)) {
+				g_pact.partner = 2;
+				PactStage(43);
+				Later(2.0f, [] {
+					auto pc = RE::PlayerCharacter::GetSingleton();
+					if (auto r = PlaceOwn(PoolData::kPactRival, pc, 0.0f, 450.0f)) {
+						g_pact.rival = r->GetFormID();
+						CallMethod(r, "Actor", "StartCombat", nullptr, static_cast<RE::Actor*>(pc));
+						Notify("「よそ者の女を連れて族長気取りか、ボラク！」");
+					}
+				});
+				return RE::BSEventNotifyControl::kContinue;
+			} else if (info == Own(PoolData::kPactCup)) {
+				Fade(3.0f);
+				Blush(20.0f);
+				Later(1.5f, [] { PactStage(45); });
+				return RE::BSEventNotifyControl::kContinue;
+			} else if (info == Own(PoolData::kPactTellChief) || info == Own(PoolData::kPactTellBorak)) {
+				PactStage(60);
+				return RE::BSEventNotifyControl::kContinue;
+			} else if (info == Own(PoolData::kPactCleanse)) {
+				Later(1.0f, [] { PactCleanse(); });
 				return RE::BSEventNotifyControl::kContinue;
 			} else if (info == Own(PoolData::kBalRelapse)) {
 				BalObjective(70, true);
@@ -2472,6 +2725,7 @@ namespace
 			CheckGentleDrug();
 			CheckEggs();
 			CheckBal();
+			CheckPact();
 		}
 		if (!g_ready || g_slots.empty()) {
 			return;
@@ -2587,6 +2841,9 @@ namespace
 		if (a_ser->OpenRecord('BALX', 1)) {
 			a_ser->WriteRecordData(g_balx);
 		}
+		if (a_ser->OpenRecord('PACT', 1)) {
+			a_ser->WriteRecordData(g_pact);
+		}
 		if (!a_ser->OpenRecord(kSerDna, 1)) {
 			return;
 		}
@@ -2631,6 +2888,7 @@ namespace
 		g_eggMorph = -1.0f;
 		g_bal = BalState{};
 		g_balx = BalExtra{};
+		g_pact = PactState{};
 		g_balShown = -1;
 		for (auto& d : g_dna) {
 			if (d.tier) {
@@ -2661,6 +2919,14 @@ namespace
 			}
 			if (type == kSerBal) {
 				a_ser->ReadRecordData(g_bal);
+				continue;
+			}
+			if (type == 'PACT') {
+				a_ser->ReadRecordData(g_pact);
+				for (RE::FormID* id : { &g_pact.captives[0], &g_pact.captives[1], &g_pact.captives[2], &g_pact.borak, &g_pact.rival }) {
+					RE::FormID n = 0;
+					*id = (*id && a_ser->ResolveFormID(*id, n)) ? n : 0;
+				}
 				continue;
 			}
 			if (type == 'BALX') {
