@@ -71,7 +71,7 @@ namespace Orb
 		return s && s->h.fps > 0 ? s->h.frames / s->h.fps : 0.0f;
 	}
 
-	bool Draw(void* a_dl, const char* a_name, float a_cx, float a_cy, float a_size, float a_time, float a_alpha, bool a_loop)
+	bool Draw(void* a_dl, const char* a_name, float a_cx, float a_cy, float a_size, float a_time, float a_alpha, bool a_loop, std::uint32_t a_tint)
 	{
 		auto s = Get(a_name);
 		if (!s || !a_dl || a_alpha <= 0.0f) {
@@ -84,7 +84,7 @@ namespace Orb
 		const float du = 1.0f / s->h.cols, dv = 1.0f / s->h.rows;
 		const auto  a = static_cast<std::uint32_t>(std::clamp(a_alpha, 0.0f, 1.0f) * 255.0f);
 		const float r = a_size * 0.5f;
-		KKMenu::AddImageUV(a_dl, s->srv, { a_cx - r, a_cy - r }, { a_cx + r, a_cy + r }, { u0, v0 }, { u0 + du, v0 + dv }, (a << 24) | 0x00FFFFFFu);
+		KKMenu::AddImageUV(a_dl, s->srv, { a_cx - r, a_cy - r }, { a_cx + r, a_cy + r }, { u0, v0 }, { u0 + du, v0 + dv }, (a << 24) | (a_tint & 0x00FFFFFFu));
 		return true;
 	}
 }

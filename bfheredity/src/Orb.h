@@ -4,7 +4,7 @@
 namespace Orb
 {
 	// render thread: draws frame `a_time` of the named orb centred at a_c with diameter a_size; false if it is not available
-	bool Draw(void* a_drawList, const char* a_name, float a_cx, float a_cy, float a_size, float a_time, float a_alpha, bool a_loop = true);
+	bool Draw(void* a_drawList, const char* a_name, float a_cx, float a_cy, float a_size, float a_time, float a_alpha, bool a_loop = true, std::uint32_t a_tint = 0x00FFFFFFu);
 	// seconds one pass of the named orb lasts (0 if not loaded yet)
 	float Length(const char* a_name);
 }

@@ -2921,10 +2921,16 @@ namespace
 					pc, std::string("FW.SpermName"), static_cast<std::int32_t>(n - 1));
 			},
 			pc, std::string("FW.SpermName"));
-		FatherName([](std::string n) {
-			std::scoped_lock l(Womb::g_lock);
-			Womb::g_data.father = n;
-		});
+		CallStatic(
+			"StorageUtil", "FormListGet",
+			[](const RE::BSScript::Variable& v) {
+				auto        dad = AsForm(v) ? AsForm(v)->As<RE::Actor>() : nullptr;
+				const int   look = dad ? RaceLook(dad) : -1;
+				std::scoped_lock l(Womb::g_lock);
+				Womb::g_data.father = FormName(AsForm(v));
+				Womb::g_data.fatherLook = look;
+			},
+			pc, std::string("FW.ChildFather"), static_cast<std::int32_t>(0));
 		CallStatic(
 			"StorageUtil", "GetIntValue",
 			[](const RE::BSScript::Variable& v) {

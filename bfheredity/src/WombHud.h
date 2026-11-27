@@ -15,6 +15,7 @@ namespace Womb
 		std::string donor;           // the latest donor
 		int         donors[6]{};     // race look of the donors still inside (Womb::Race)
 		int         donorN = 0;
+		int         fatherLook = -1;  // race look of the child's father (Womb::Race), -1 unknown
 	};
 	// how their seed looks in the HUD
 	enum Race
@@ -42,6 +43,28 @@ namespace Womb
 		return k[std::clamp(a_race, 0, 7)];
 	}
 	inline std::atomic<bool> g_flashReq{ false };
+	// a soft tint of the orb toward the father's colours (ImGui ABGR, alpha ignored)
+	inline std::uint32_t Tint(int a_race)
+	{
+		switch (a_race) {
+		case kOrc:
+			return 0xD2FFC8;  // r200 g255 b210
+		case kElf:
+			return 0xC8F5FF;
+		case kKhajiit:
+			return 0xB4DCFF;
+		case kArgonian:
+			return 0xF0FFC8;
+		case kVampire:
+			return 0xC8BEFF;
+		case kDaedra:
+			return 0xFFC8E6;
+		case kBeast:
+			return 0xC8DCF0;
+		default:
+			return 0xFFFFFF;
+		}
+	}
 
 	inline std::mutex g_lock;
 	inline Data       g_data;
@@ -139,6 +162,68 @@ namespace Womb
 	}
 
 
+
+	// the fertilised egg carries the father's blood: an aura in his race's colours
+	inline void DrawZygoteAccent(void* dl, int a_race, KKMenu::ImVec2 c, float R, float s, float t)
+	{
+		if (a_race <= kHuman) {
+			return;
+		}
+		const Look& L = LookOf(a_race);
+		const float pulse = 0.5f + 0.5f * std::sin(t * 2.2f);
+		auto        col = [&](float a) { return Col(L.r, L.g, L.b, a); };
+		switch (a_race) {
+		case kOrc:  // green veins pulsing outward, a fierce green rim
+			for (int i = 0; i < 10; ++i) {
+				const float a = i * 0.628f + 0.15f * std::sin(t * 0.7f + i);
+				const float r0 = R * 0.38f, r1 = R * (0.62f + 0.08f * std::sin(t * 3.0f + i));
+				KKMenu::AddLine(dl, V(c.x + std::cos(a) * r0, c.y + std::sin(a) * r0), V(c.x + std::cos(a + 0.12f) * r1, c.y + std::sin(a + 0.12f) * r1), col(0.35f + 0.3f * pulse), 1.6f * s);
+			}
+			KKMenu::AddCircle(dl, c, R * 0.4f, col(0.45f + 0.35f * pulse), 2.5f * s, 40);
+			break;
+		case kElf:  // golden motes rising
+			for (int i = 0; i < 14; ++i) {
+				const float ph = std::fmod(t * 0.2f + i * 0.0714f, 1.0f);
+				const float x = c.x + std::sin(i * 2.3f) * R * 0.45f, y = c.y + R * 0.4f - ph * R * 0.9f;
+				KKMenu::AddCircleFilled(dl, V(x, y), (1.2f + 1.2f * std::sin(i)) * s, col(0.8f * std::sin(3.14159f * ph)), 8);
+			}
+			KKMenu::AddCircle(dl, c, R * 0.42f, col(0.25f + 0.25f * pulse), 1.5f * s, 40);
+			break;
+		case kKhajiit:  // a soft furred halo
+			for (int i = 0; i < 48; ++i) {
+				const float a = i * 0.1309f + t * 0.1f, r0 = R * 0.4f, len = R * (0.05f + 0.04f * std::sin(i * 7.0f + t * 2.0f));
+				KKMenu::AddLine(dl, V(c.x + std::cos(a) * r0, c.y + std::sin(a) * r0), V(c.x + std::cos(a) * (r0 + len), c.y + std::sin(a) * (r0 + len)), col(0.45f), 1.0f * s);
+			}
+			break;
+		case kArgonian:  // scales shimmering in a slow ring
+			for (int i = 0; i < 18; ++i) {
+				const float a = i * 0.349f + t * 0.25f, r = R * 0.43f;
+				const float sh = 0.5f + 0.5f * std::sin(t * 2.0f - i * 0.6f);
+				KKMenu::AddCircle(dl, V(c.x + std::cos(a) * r, c.y + std::sin(a) * r), 3.0f * s, col(0.25f + 0.5f * sh), 1.2f * s, 6);
+			}
+			break;
+		case kVampire:  // a slow crimson heartbeat around it
+		{
+			const float beat = std::pow(std::max(0.0f, std::sin(t * 2.6f)), 6.0f);
+			KKMenu::AddCircleFilled(dl, c, R * (0.45f + 0.05f * beat), Col(120, 0, 20, 0.18f + 0.25f * beat), 40);
+			KKMenu::AddCircle(dl, c, R * (0.42f + 0.06f * beat), col(0.5f + 0.4f * beat), 2.0f * s, 40);
+			break;
+		}
+		case kDaedra:  // violet embers drifting up from a dark aura
+			KKMenu::AddCircleFilled(dl, c, R * 0.5f, Col(30, 0, 40, 0.25f), 40);
+			for (int i = 0; i < 16; ++i) {
+				const float ph = std::fmod(t * 0.3f + i * 0.0625f, 1.0f);
+				const float x = c.x + std::sin(i * 1.7f + t * 0.5f) * R * 0.35f, y = c.y + R * 0.3f - ph * R * 0.8f;
+				KKMenu::AddCircleFilled(dl, V(x, y), 1.6f * s, col(0.9f * std::sin(3.14159f * ph)), 6);
+			}
+			KKMenu::AddCircle(dl, c, R * 0.42f, col(0.35f + 0.35f * pulse), 2.0f * s, 40);
+			break;
+		default:  // beasts: a warm, rough halo
+			KKMenu::AddCircle(dl, c, R * 0.44f, col(0.35f + 0.3f * pulse), 3.0f * s, 24);
+			break;
+		}
+	}
+
 	// seed swimming in from the rim toward the egg, each in its donor's colours
 	inline void DrawSperm(void* dl, const Data& d, KKMenu::ImVec2 c, float rOut, float rIn, float s, float t)
 	{
@@ -202,12 +287,15 @@ namespace Womb
 		const float orbD = 178.0f * s;
 		bool        orbOk = false;
 		if (t - s_flashT < Orb::Length("flash")) {
-			orbOk = Orb::Draw(dl, "flash", c.x, c.y, orbD, t - s_flashT, 1.0f, false);
+			orbOk = Orb::Draw(dl, "flash", c.x, c.y, orbD, t - s_flashT, 1.0f, false, Tint(d.fatherLook));
 		} else {
-			orbOk = Orb::Draw(dl, orbName, c.x, c.y, orbD, t, d.state == 8 || d.state == 2 ? 0.75f : 1.0f);
+			orbOk = Orb::Draw(dl, orbName, c.x, c.y, orbD, t, d.state == 8 || d.state == 2 ? 0.75f : 1.0f, true, preg ? Tint(d.fatherLook) : 0xFFFFFFu);
 		}
 		if (orbOk) {
 			KKMenu::AddCircleFilled(dl, c, orbD * 0.62f, Col(255, 90, 160, 0.05f + 0.10f * heat * pulse), 40);  // warmth
+			if (preg) {
+				DrawZygoteAccent(dl, d.fatherLook, c, orbD, s, t);
+			}
 			if (d.sperm > 0 && d.state < 4 && t - s_flashT >= Orb::Length("flash")) {
 				DrawSperm(dl, d, c, orbD * 0.47f, orbD * 0.12f, s, t);
 			}
