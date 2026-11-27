@@ -847,6 +847,19 @@ namespace
 		CallMethod(a, "Actor", "SetRestrained", nullptr, a_hold);
 	}
 
+	void HoldPlayer(bool a_hold);
+
+	// controls come back only once the cut-in camera has fully let go: the free camera restores the control state it saw when it
+	// was entered (disabled), so enabling them while it is still active leaves the player stuck
+	void ReleasePlayerAfterCamera(int a_tries = 0)
+	{
+		if ((Cutin::g.active || Cutin::g_pending) && a_tries < 60) {
+			Later(0.25f, [a_tries] { ReleasePlayerAfterCamera(a_tries + 1); });
+			return;
+		}
+		Later(0.2f, [] { HoldPlayer(false); });
+	}
+
 	void HoldPlayer(bool a_hold)
 	{
 		if (a_hold) {
@@ -1100,7 +1113,7 @@ namespace
 				if (anim) {
 					Anim(RE::PlayerCharacter::GetSingleton(), "IdleForceDefaultState");
 				}
-				HoldPlayer(false);
+				ReleasePlayerAfterCamera();
 				g_dnaBusy = false;
 			});
 		});
