@@ -61,6 +61,12 @@ namespace
 		bool          blush = true;              // raise SexLab Aroused exposure at those moments, so Blush When Aroused reddens her face
 		bool          insertFace = true;        // her face during insertion (nervous, the moment it goes in, relief)
 		bool          insertShake = true;       // camera shake + controller rumble the moment it goes in
+		bool          wombHud = true;           // the womb HUD (cycle, what is inside, whose child) and the floating lines
+		float         hudScale = 1.0f;
+		std::int32_t  hudCorner = 0;            // 0 bottom left, 1 bottom right, 2 top left, 3 top right
+		bool          moodFace = true;          // flushed face when aroused
+		bool          shameFace = true;         // embarrassed face and blush when seen naked
+		bool          spiritAllies = true;      // Bal's Mark: Karen, Lilian and Taranis fight Molag Bal with her
 		// live chaurus egg
 		bool          liveEgg = true;           // the item drops at all
 		float         eggSacChance = 0.15f;     // harvesting a chaurus egg sac also gives a live egg
@@ -201,6 +207,18 @@ namespace
 				g_settings.insertFace = b();
 			} else if (key == "binsertshake") {
 				g_settings.insertShake = b();
+			} else if (key == "bwombhud") {
+				g_settings.wombHud = b();
+			} else if (key == "fhudscale") {
+				g_settings.hudScale = static_cast<float>(std::atof(val.c_str()));
+			} else if (key == "ihudcorner") {
+				g_settings.hudCorner = std::atoi(val.c_str());
+			} else if (key == "bmoodface") {
+				g_settings.moodFace = b();
+			} else if (key == "bshameface") {
+				g_settings.shameFace = b();
+			} else if (key == "bspiritallies") {
+				g_settings.spiritAllies = b();
 			} else if (key == "bsoloscene") {
 				g_settings.soloScene = b();
 			} else if (key == "buseocum") {
@@ -266,6 +284,7 @@ namespace
 	}
 
 #include "Cutin.h"
+#include "WombHud.h"
 
 	// whole body (body slot) -> face, the cut lasting about a_seconds
 	void Camera(RE::Actor* a, float a_seconds, bool a_orbit = false, float a_orbitFrom = 0.0f, std::uint32_t a_mask = 1u << (32 - 30))
@@ -1304,7 +1323,9 @@ namespace
 		std::uint8_t  cured = 0;          // the root is gone (stage 100)
 		std::uint8_t  dark = 0;           // yielded (stage 200)
 		std::uint8_t  chSeen = 0;         // the mark answered Coldharbour
+		std::uint8_t  alliesOut = 0;      // Karen, Lilian and Taranis came to the fight
 	};
+	std::vector<RE::FormID> g_spirits;  // their refs, this session
 	BalExtra g_balx;
 
 	RE::TESQuest* BalQuest() { return RE::TESDataHandler::GetSingleton()->LookupForm<RE::TESQuest>(PoolData::kBalQuest, kPlugin); }
@@ -1549,6 +1570,12 @@ namespace
 
 	void BalCure()
 	{
+		for (auto id : g_spirits) {
+			if (auto r = RE::TESForm::LookupByID<RE::TESObjectREFR>(id)) {
+				CallMethod(r, "ObjectReference", "Disable", nullptr, true);
+			}
+		}
+		g_spirits.clear();
 		g_balx.cured = 1;
 		g_balx.relapsed = 0;
 		g_bal.dormant = 1;
@@ -1557,6 +1584,7 @@ namespace
 		BalStage(100);
 		BalObjective(70, true);
 		BalObjective(80, true);
+		BalObjective(85, true);
 		BalObjective(50, true);
 		if (auto q = BalQuest()) {
 			CallMethod(q, "Quest", "CompleteQuest", nullptr);
@@ -1684,7 +1712,50 @@ namespace
 			return;
 		}
 		// the Vigilant's road: each main quest done thins the mark; Coldharbour wakes it
-		if (g_balx.relapsed && g_bal.qstage == 80) {
+		if (g_balx.relapsed && g_bal.qstage == 80 && g_settings.spiritAllies) {
+			auto fall = RE::TESDataHandler::GetSingleton()->LookupForm<RE::TESQuest>(0x00EFF7, "Vigilant.esm");  // "Endless Fall": mother, daughter, the cursed knight
+			if (fall && fall->IsCompleted()) {
+				BalObjective(80, true);
+				BalStage(85);
+				BalObjective(85, false);
+				Notify("カレンとリリアン、呪われた騎士タラニスの魂が囁いた。「コールドハーバーで、私たちも共に」");
+			}
+		}
+		if (g_bal.qstage == 85 && !g_balx.alliesOut && pc->IsInCombat()) {
+			auto boss = BalVigilantBoss();
+			if (auto pl = RE::ProcessLists::GetSingleton(); boss && pl) {
+				for (auto& h : pl->highActorHandles) {
+					auto a = h.get();
+					if (!a || a->IsDead() || a->GetActorBase() != boss || IsBalAvatar(a.get()) || a->GetPosition().GetDistance(pc->GetPosition()) > 5000.0f) {
+						continue;
+					}
+					g_balx.alliesOut = 1;
+					auto* dh = RE::TESDataHandler::GetSingleton();
+					auto  ghost = dh->LookupForm<RE::TESEffectShader>(0x03B6CB, "Skyrim.esm");  // GhostFXShader
+					const RE::FormID who[3] = { 0x170A33, 0x170A32, 0x170A31 };  // mother, daughter, knight (Vigilant's own spirits of them)
+					const float      off[3][2] = { { -220.0f, -120.0f }, { 220.0f, -120.0f }, { 0.0f, 260.0f } };
+					for (int i = 0; i < 3; ++i) {
+						auto npc = dh->LookupForm<RE::TESNPC>(who[i], "Vigilant.esm");
+						auto ref = npc ? pc->PlaceObjectAtMe(npc, false) : nullptr;
+						if (!ref) {
+							continue;
+						}
+						RE::TESObjectREFR* r = ref.get();
+						g_spirits.push_back(r->GetFormID());
+						CallMethod(r, "ObjectReference", "MoveTo", nullptr, static_cast<RE::TESObjectREFR*>(pc), off[i][0], off[i][1], 0.0f, true);
+						CallMethod(r, "Actor", "SetPlayerTeammate", nullptr, true, true);
+						CallMethod(r, "Actor", "IgnoreFriendlyHits", nullptr, true);
+						if (ghost) {
+							CallMethod(ghost, "EffectShader", "Play", nullptr, r, -1.0f);
+						}
+						CallMethod(r, "Actor", "StartCombat", nullptr, a.get());
+					}
+					Notify("「娘には指一本触れさせない」「お母さん、一緒に！」「我が剣、今度こそ主のために」");
+					break;
+				}
+			}
+		}
+		if (g_balx.relapsed && g_bal.qstage >= 80 && g_bal.qstage < 100) {
 			const std::uint16_t m = VigilantDoneMask();
 			if (const std::uint16_t fresh = m & ~g_balx.vigMask) {
 				g_balx.vigMask = m;
@@ -2082,6 +2153,32 @@ namespace
 						0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
 				}
 			}
+		}
+		// a child of any orc, at any point before the trials are done, also counts
+		if (g_pact.stage >= 10 && g_pact.stage < 45 && !g_pact.escaped) {
+			CycleState([](int st) {
+				if (st < 4 || st > 7) {
+					return;
+				}
+				CallStatic(
+					"StorageUtil", "FormListGet",
+					[](const RE::BSScript::Variable& v) {
+						auto dad = AsForm(v) ? AsForm(v)->As<RE::Actor>() : nullptr;
+						auto race = dad ? dad->GetRace() : nullptr;
+						const char* rn = race ? race->GetFullName() : "";
+						const bool  orc = race && (race->GetFormID() == 0x013747 || race->GetFormID() == 0x0A82B9 || std::strstr(rn, "Orc") || std::strstr(rn, "オーク"));
+						if (!orc || g_pact.stage >= 45 || g_pact.stage < 10) {
+							return;
+						}
+						if (!g_pact.partner) {
+							g_pact.partner = 3;
+						}
+						Blush(25.0f);
+						Notify(std::string("下腹部に新しい命の気配がある。") + dad->GetDisplayFullName() + "の子……オークの血を引く子だ");
+						PactStage(50);
+					},
+					static_cast<RE::TESForm*>(RE::PlayerCharacter::GetSingleton()), std::string("FW.ChildFather"), static_cast<std::int32_t>(0));
+			});
 		}
 		if (g_pact.stage == 45) {
 			CycleState([](int st) {
@@ -2685,6 +2782,163 @@ namespace
 		}
 	}
 
+
+	// ------------------------------------------------------------------ 0.11: the womb HUD
+	float g_stateSince = 0.0f;  // our own clock for the state, when Beeing Female's is not readable
+	int   g_lastSperm = -1;
+	std::string FormName(RE::TESForm* f)
+	{
+		auto a = f ? f->As<RE::Actor>() : nullptr;
+		const char* n = a ? a->GetDisplayFullName() : (f ? f->GetName() : nullptr);
+		return n && *n ? n : "";
+	}
+	void FatherName(std::function<void(std::string)> a_cb)
+	{
+		CallStatic(
+			"StorageUtil", "FormListGet", [a_cb](const RE::BSScript::Variable& v) { a_cb(FormName(AsForm(v))); },
+			static_cast<RE::TESForm*>(RE::PlayerCharacter::GetSingleton()), std::string("FW.ChildFather"), static_cast<std::int32_t>(0));
+	}
+	void WombState(int a_last, int a_st)
+	{
+		Womb::g_show = g_settings.wombHud;
+		Womb::g_scale = std::clamp(g_settings.hudScale, 0.4f, 3.0f);
+		Womb::g_corner = g_settings.hudCorner & 3;
+		{
+			std::scoped_lock l(Womb::g_lock);
+			Womb::g_data.state = a_st;
+		}
+		if (a_last == a_st) {
+			return;
+		}
+		g_stateSince = GameDays();
+		if (a_last < 0) {
+			return;
+		}
+		const auto pink = Womb::Col(255, 170, 210, 1.0f), gold = Womb::Col(255, 220, 140, 1.0f), red = Womb::Col(230, 90, 110, 1.0f);
+		if (a_st == 1) {
+			Womb::Push("排卵しました", "卵が、ゆっくりと降りてくる……", gold);
+			Blush(8.0f);
+		} else if (a_st == 4 && a_last <= 3) {
+			FatherName([pink](std::string n) { Womb::Push("受精しました", n.empty() ? "胎の奥で、ふたつがひとつになった" : n + "の子を、宿した", pink); });
+		} else if (a_st == 3) {
+			Womb::Push("月のものが来た", "今回は、授からなかった", red);
+		} else if (a_st == 5) {
+			Womb::Push("お腹が膨らみ始めた", "小さな命が、確かにここにいる", pink);
+		} else if (a_st == 6) {
+			Womb::Push("妊娠後期", "もうすぐ会える", pink);
+		} else if (a_st == 8 && a_last == 7) {
+			Womb::Push("生まれた", "胎が、ゆっくりと元に戻っていく", gold);
+		}
+	}
+	void UpdateWomb()
+	{
+		auto pc = static_cast<RE::TESForm*>(RE::PlayerCharacter::GetSingleton());
+		CallStatic(
+			"StorageUtil", "GetFloatValue",
+			[](const RE::BSScript::Variable& v) {
+				const float enter = v.IsFloat() ? v.GetFloat() : 0.0f;
+				const float since = enter > 0.0f ? enter : g_stateSince;
+				std::scoped_lock l(Womb::g_lock);
+				Womb::g_data.daysIn = std::max(0.0f, GameDays() - since);
+			},
+			pc, std::string("FW.StateEnterTime"), 0.0f);
+		CallStatic(
+			"StorageUtil", "FormListCount",
+			[pc](const RE::BSScript::Variable& v) {
+				const int n = v.IsInt() ? v.GetSInt() : 0;
+				{
+					std::scoped_lock l(Womb::g_lock);
+					Womb::g_data.sperm = n;
+				}
+				const int was = std::exchange(g_lastSperm, n);
+				if (n <= 0) {
+					return;
+				}
+				CallStatic(
+					"StorageUtil", "FormListGet",
+					[n, was](const RE::BSScript::Variable& f) {
+						const std::string who = FormName(AsForm(f));
+						{
+							std::scoped_lock l(Womb::g_lock);
+							Womb::g_data.donor = who.empty() ? "" : "いちばん新しいのは " + who;
+						}
+						if (was >= 0 && n > was && g_lastCycle.load() >= 0 && g_lastCycle.load() <= 3) {
+							Womb::Push("胎内に注がれた", who.empty() ? "奥へ、奥へと熱が満ちていく" : who + "の熱が、奥へと満ちていく", Womb::Col(255, 200, 225, 1.0f));
+						}
+					},
+					pc, std::string("FW.SpermName"), static_cast<std::int32_t>(n - 1));
+			},
+			pc, std::string("FW.SpermName"));
+		FatherName([](std::string n) {
+			std::scoped_lock l(Womb::g_lock);
+			Womb::g_data.father = n;
+		});
+		CallStatic(
+			"StorageUtil", "GetIntValue",
+			[](const RE::BSScript::Variable& v) {
+				std::scoped_lock l(Womb::g_lock);
+				Womb::g_data.unborn = v.IsInt() ? v.GetSInt() : 0;
+			},
+			pc, std::string("FW.NumChilds"), static_cast<std::int32_t>(0));
+		CallStatic(
+			"OSLAroused_ModInterface", "GetArousal",
+			[](const RE::BSScript::Variable& v) {
+				std::scoped_lock l(Womb::g_lock);
+				Womb::g_data.arousal = v.IsFloat() ? v.GetFloat() : (v.IsInt() ? static_cast<float>(v.GetSInt()) : Womb::g_data.arousal);
+			},
+			static_cast<RE::Actor*>(RE::PlayerCharacter::GetSingleton()));
+	}
+
+	// ------------------------------------------------------------------ 0.11: flushed when aroused, shy when seen naked
+	void Face(std::int32_t a_mood, std::int32_t a_strength, std::int32_t a_eyes);
+	void CheckMood()
+	{
+		static float s_next = 0.0f;  // real seconds
+		static float s_clock = 0.0f;
+		s_clock += 1.0f;
+		if (s_clock < s_next || g_inserting || Cutin::g.active || Cutin::g_pending) {
+			return;
+		}
+		auto pc = RE::PlayerCharacter::GetSingleton();
+		auto ui = RE::UI::GetSingleton();
+		if (!pc || pc->IsInCombat() || (ui && (ui->GameIsPaused() || ui->IsMenuOpen(RE::DialogueMenu::MENU_NAME)))) {
+			return;
+		}
+		float arousal;
+		{
+			std::scoped_lock l(Womb::g_lock);
+			arousal = Womb::g_data.arousal;
+		}
+		if (g_settings.shameFace && !pc->GetWornArmor(RE::BGSBipedObjectForm::BipedObjectSlot::kBody)) {
+			static auto npcKw = RE::TESDataHandler::GetSingleton()->LookupForm<RE::BGSKeyword>(0x013794, "Skyrim.esm");
+			bool        seen = false;
+			if (auto pl = RE::ProcessLists::GetSingleton()) {
+				for (auto& h : pl->highActorHandles) {
+					auto a = h.get();
+					if (a && a.get() != pc && !a->IsDead() && !a->IsHostileToActor(pc) && (!npcKw || a->HasKeyword(npcKw)) &&
+						a->GetPosition().GetDistance(pc->GetPosition()) < 900.0f) {
+						seen = true;
+						break;
+					}
+				}
+			}
+			if (seen) {
+				Face(13, 60, 40);  // flustered
+				Blush(12.0f);
+				Notify("……見られてる");
+				Later(6.0f, [] { Face(-1, 0, -1); });
+				s_next = s_clock + 60.0f;
+				return;
+			}
+		}
+		if (g_settings.moodFace && arousal >= 70.0f) {
+			Face(10, static_cast<std::int32_t>(25 + (arousal - 70.0f)), 35);  // flushed, heavy-lidded
+			Blush(4.0f);
+			Later(8.0f, [] { Face(-1, 0, -1); });
+			s_next = s_clock + 45.0f;
+		}
+	}
+
 	void CheckOvulation()
 	{
 		auto pc = RE::PlayerCharacter::GetSingleton();
@@ -2700,6 +2954,7 @@ namespace
 				}
 				const int last = g_lastCycle.exchange(st);
 				ApplySoftAbs(st);  // cheap when nothing changed
+				WombState(last, st);
 				if (last >= 0 && last <= 3 && st >= 4 && st <= 7) {
 					Log("cycle: conceived");
 					LoadSettings(false);
@@ -2726,6 +2981,8 @@ namespace
 			CheckEggs();
 			CheckBal();
 			CheckPact();
+			UpdateWomb();
+			CheckMood();
 		}
 		if (!g_ready || g_slots.empty()) {
 			return;
@@ -3040,6 +3297,7 @@ namespace
 			if (KKMenu::Installed()) {
 				KKMenu::RegisterHudElement(Cutin::DrawLetterbox);
 				KKMenu::RegisterHudElement(Video::Draw);
+				KKMenu::RegisterHudElement(Womb::Hud);
 			}
 			std::thread([] {
 				for (;;) {

@@ -258,4 +258,44 @@ namespace KKMenu
 			f(a_list, font(), a_size, a_pos, a_col, a_text, nullptr, 0.0f, nullptr);
 		}
 	}
+
+	inline void AddCircleFilled(void* a_list, ImVec2 a_c, float a_r, std::uint32_t a_col, int a_seg = 32)
+	{
+		static auto f = Fn<void (*)(void*, const ImVec2, float, std::uint32_t, int)>("ImDrawList_AddCircleFilled");
+		if (f && a_list) {
+			f(a_list, a_c, a_r, a_col, a_seg);
+		}
+	}
+
+	inline void AddCircle(void* a_list, ImVec2 a_c, float a_r, std::uint32_t a_col, float a_thickness, int a_seg = 32)
+	{
+		static auto f = Fn<void (*)(void*, const ImVec2, float, std::uint32_t, int, float)>("ImDrawList_AddCircle");
+		if (f && a_list) {
+			f(a_list, a_c, a_r, a_col, a_seg, a_thickness);
+		}
+	}
+
+	inline void AddLine(void* a_list, ImVec2 a_a, ImVec2 a_b, std::uint32_t a_col, float a_thickness)
+	{
+		static auto f = Fn<void (*)(void*, const ImVec2, const ImVec2, std::uint32_t, float)>("ImDrawList_AddLine");
+		if (f && a_list) {
+			f(a_list, a_a, a_b, a_col, a_thickness);
+		}
+	}
+
+	inline void AddBezierCubic(void* a_list, ImVec2 a_p1, ImVec2 a_p2, ImVec2 a_p3, ImVec2 a_p4, std::uint32_t a_col, float a_thickness)
+	{
+		static auto f = Fn<void (*)(void*, const ImVec2, const ImVec2, const ImVec2, const ImVec2, std::uint32_t, float, int)>("ImDrawList_AddBezierCubic");
+		if (f && a_list) {
+			f(a_list, a_p1, a_p2, a_p3, a_p4, a_col, a_thickness, 0);
+		}
+	}
+
+	inline void AddConvexPolyFilled(void* a_list, const ImVec2* a_pts, int a_n, std::uint32_t a_col)
+	{
+		static auto f = Fn<void (*)(void*, const ImVec2*, int, std::uint32_t)>("ImDrawList_AddConvexPolyFilled");
+		if (f && a_list) {
+			f(a_list, a_pts, a_n, a_col);
+		}
+	}
 }
