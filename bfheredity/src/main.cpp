@@ -15,6 +15,8 @@
 #include "PoolData.h"
 #include "MenuApi.h"
 
+#include "Video.h"
+
 namespace
 {
 	// ------------------------------------------------------------------ logging
@@ -48,6 +50,8 @@ namespace
 		bool          inherit = true;
 		bool          nameOnBirth = true;
 		std::uint32_t renameKey = 0x31;  // N
+		bool          ovulationVideo = true;  // a short video in a corner window when the player starts to ovulate (Beeing Female)
+		std::uint32_t videoTestKey = 0;       // plays it at once (0 = off)
 		bool          hairStyle = true;
 		bool          eyes = true;
 		bool          faceShape = true;
@@ -148,6 +152,14 @@ namespace
 				g_settings.cutinPlayer = g_settings.camera;
 			} else if (key == "finsertcamerazoom") {
 				g_settings.insertCameraZoom = static_cast<float>(std::atof(val.c_str()));
+			} else if (key == "bovulationvideo") {
+				g_settings.ovulationVideo = b();
+			} else if (key == "ivideotestkey") {
+				g_settings.videoTestKey = static_cast<std::uint32_t>(std::strtoul(val.c_str(), nullptr, 0));
+			} else if (key == "fvideowidth") {
+				Video::g_cfg.width = static_cast<float>(std::atof(val.c_str()));
+			} else if (key == "bvideosound") {
+				Video::g_cfg.sound = b();
 			} else if (key == "bdropbottle") {
 				g_settings.dropBottle = b();
 			} else if (key == "finsertcameraseconds") {
@@ -721,6 +733,10 @@ namespace
 					continue;
 				}
 				const auto code = b->GetIDCode();
+				if (g_settings.videoTestKey != 0 && code == g_settings.videoTestKey) {
+					Video::Play(L"ovulation");
+					continue;
+				}
 				if (code != g_settings.renameKey && (g_settings.collectKey == 0 || code != g_settings.collectKey)) {
 					continue;
 				}
@@ -1185,8 +1201,38 @@ namespace
 			a, std::string("FW.Child.Mother"), static_cast<RE::TESForm*>(nullptr));
 	}
 
+	// Beeing Female's cycle: StorageUtil "FW.CurrentState" on the woman (0 follicular, 1 ovulation, 2 luteal, 3 menstruation, ...)
+	std::atomic<int> g_lastCycle{ -1 };
+	void CheckOvulation()
+	{
+		auto pc = RE::PlayerCharacter::GetSingleton();
+		if (!pc) {
+			return;
+		}
+		CallStatic(
+			"StorageUtil", "GetIntValue",
+			[](const RE::BSScript::Variable& a_v) {
+				const int st = a_v.IsInt() ? a_v.GetSInt() : -1;
+				if (st < 0) {
+					return;
+				}
+				const int last = g_lastCycle.exchange(st);
+				if (last != -1 && last != 1 && st == 1) {
+					Log("cycle: ovulation started");
+					LoadSettings(false);
+					if (g_settings.ovulationVideo) {
+						Video::Play(L"ovulation");
+					}
+				}
+			},
+			static_cast<RE::TESForm*>(pc), std::string("FW.CurrentState"), static_cast<std::int32_t>(-1));
+	}
+
 	void Poll()
 	{
+		if (g_ready) {
+			CheckOvulation();
+		}
 		if (!g_ready || g_slots.empty()) {
 			return;
 		}
@@ -1444,6 +1490,7 @@ namespace
 			Cutin::InstallHooks();
 			if (KKMenu::Installed()) {
 				KKMenu::RegisterHudElement(Cutin::DrawLetterbox);
+				KKMenu::RegisterHudElement(Video::Draw);
 			}
 			std::thread([] {
 				for (;;) {
@@ -1468,6 +1515,8 @@ namespace
 			break;
 		case SKSE::MessagingInterface::kPreLoadGame:
 			g_ready = false;
+			g_lastCycle = -1;  // the state of the loaded game is learnt first, not taken for a change
+			Video::Stop();
 			SKSE::GetTaskInterface()->AddTask([] { Cutin::Stop("game load"); });
 			break;
 		case SKSE::MessagingInterface::kPostLoadGame:

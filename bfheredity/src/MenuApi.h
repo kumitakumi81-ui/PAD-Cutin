@@ -192,6 +192,23 @@ namespace KKMenu
 		}
 	}
 
+	// ImGui 1.90: ImTextureID is a void* (the D3D11 backend's ID3D11ShaderResourceView*)
+	inline void AddImage(void* a_list, void* a_tex, ImVec2 a_min, ImVec2 a_max, std::uint32_t a_col)
+	{
+		static auto f = Fn<void (*)(void*, void*, const ImVec2, const ImVec2, const ImVec2, const ImVec2, std::uint32_t)>("ImDrawList_AddImage");
+		if (f && a_list && a_tex) {
+			f(a_list, a_tex, a_min, a_max, ImVec2{ 0, 0 }, ImVec2{ 1, 1 }, a_col);
+		}
+	}
+
+	inline void AddRect(void* a_list, ImVec2 a_min, ImVec2 a_max, std::uint32_t a_col, float a_thickness)
+	{
+		static auto f = Fn<void (*)(void*, const ImVec2, const ImVec2, std::uint32_t, float, int, float)>("ImDrawList_AddRect");
+		if (f && a_list) {
+			f(a_list, a_min, a_max, a_col, 4.0f, 0, a_thickness);
+		}
+	}
+
 	inline void AddTriangleFilled(void* a_list, ImVec2 a_p1, ImVec2 a_p2, ImVec2 a_p3, std::uint32_t a_col)
 	{
 		static auto f = Fn<void (*)(void*, const ImVec2, const ImVec2, const ImVec2, std::uint32_t)>("ImDrawList_AddTriangleFilled");
