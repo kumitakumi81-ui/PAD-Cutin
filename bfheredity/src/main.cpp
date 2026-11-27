@@ -16,6 +16,7 @@
 #include "MenuApi.h"
 
 #include "Video.h"
+#include "Orb.h"
 
 namespace
 {
@@ -284,7 +285,6 @@ namespace
 	}
 
 #include "Cutin.h"
-#include "Orb.h"
 #include "WombHud.h"
 
 	// whole body (body slot) -> face, the cut lasting about a_seconds
