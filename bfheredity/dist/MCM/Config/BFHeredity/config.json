@@ -69,6 +69,42 @@
           }
         }
       ]
+    },
+    {
+      "pageDisplayName": "妊娠",
+      "content": [
+        {
+          "type": "header",
+          "text": "採取"
+        },
+        {
+          "id": "iAssistFramework:DNA",
+          "text": "「手伝ってあげる」に使うもの",
+          "type": "enum",
+          "help": "自動：OStim があれば OStim、なければ SexLab",
+          "valueOptions": {
+            "options": [
+              "自動",
+              "SexLab",
+              "OStim"
+            ],
+            "sourceType": "ModSettingInt"
+          }
+        },
+        {
+          "type": "header",
+          "text": "妊娠のしくみ"
+        },
+        {
+          "id": "bNaturalConception:DNA",
+          "text": "排卵期のときだけ妊娠する（BF の仕組み）",
+          "type": "toggle",
+          "help": "オン：入れた精液が数日体内に残り、その間に排卵すると Beeing Female の判定で妊娠。避妊も有効。オフ：入れた瞬間に瓶の%で判定",
+          "valueOptions": {
+            "sourceType": "ModSettingBool"
+          }
+        }
+      ]
     }
   ]
 }
