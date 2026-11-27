@@ -2939,6 +2939,30 @@ namespace
 		}
 	}
 
+	bool IsOrc(RE::Actor* a)
+	{
+		auto        race = a ? a->GetRace() : nullptr;
+		const char* rn = race ? race->GetFullName() : "";
+		return race && (race->GetFormID() == 0x013747 || race->GetFormID() == 0x0A82B9 || std::strstr(rn, "Orc") || std::strstr(rn, "オーク"));
+	}
+	// the camera sinks toward her lower belly, then the film takes over: as if looking inside
+	void WombCinematic(std::wstring a_name, std::wstring a_fallback)
+	{
+		auto pc = RE::PlayerCharacter::GetSingleton();
+		auto play = [a_name, a_fallback] {
+			if (!Video::Play(a_name) && a_name != a_fallback) {
+				Video::Play(a_fallback);
+			}
+		};
+		if (!g_settings.camera || !pc || pc->IsInCombat()) {
+			play();
+			return;
+		}
+		Camera(pc, 3.2f, false, 0.0f, 1u << (49 - 30));  // waist: settles on the lower belly
+		Later(0.9f, [] { BellyPulse(0.06f); });
+		Later(1.7f, play);
+	}
+
 	void CheckOvulation()
 	{
 		auto pc = RE::PlayerCharacter::GetSingleton();
@@ -2959,14 +2983,21 @@ namespace
 					Log("cycle: conceived");
 					LoadSettings(false);
 					if (g_settings.conceptionVideo) {
-						Video::Play(L"conception");
+						// an orc father gets his own film (green, fierce); others the usual one
+						CallStatic(
+							"StorageUtil", "FormListGet",
+							[](const RE::BSScript::Variable& v) {
+								auto dad = AsForm(v) ? AsForm(v)->As<RE::Actor>() : nullptr;
+								WombCinematic(IsOrc(dad) ? L"conception_orc" : L"conception", L"conception");
+							},
+							static_cast<RE::TESForm*>(RE::PlayerCharacter::GetSingleton()), std::string("FW.ChildFather"), static_cast<std::int32_t>(0));
 					}
 				}
 				if (last != -1 && last != 1 && st == 1) {
 					Log("cycle: ovulation started");
 					LoadSettings(false);
 					if (g_settings.ovulationVideo) {
-						Video::Play(L"ovulation");
+						WombCinematic(L"ovulation", L"ovulation");
 					}
 				}
 			},
