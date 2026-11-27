@@ -297,6 +297,7 @@ namespace Cutin
 		bool               headValid = false;
 		bool               orbit = false;  // BF Heredity insertion shot: behind -> round to the front (whole body) -> face
 		float              orbitSign = 1.0f;
+		float              orbitFrom = 0.0f;  // where the circling starts: 0 = behind, 0.5 = from the side
 	};
 
 	inline State                    g;
@@ -311,6 +312,7 @@ namespace Cutin
 		RE::ActorHandle    actor;
 		std::uint32_t      mask = 0;
 		bool               orbit = false;
+		float              orbitFrom = 0.0f;
 		SClock::time_point since;
 	};
 	inline std::optional<Pending> g_pending;
@@ -543,7 +545,7 @@ namespace Cutin
 		}
 	}
 
-	inline void Start(RE::Actor* a, std::uint32_t a_mask, bool a_orbit = false)
+	inline void Start(RE::Actor* a, std::uint32_t a_mask, bool a_orbit = false, float a_orbitFrom = 0.0f)
 	{
 		auto player = RE::PlayerCharacter::GetSingleton();
 		auto cam = RE::PlayerCamera::GetSingleton();
@@ -614,6 +616,7 @@ namespace Cutin
 		}
 		g.roll *= std::clamp(g_settings.cutinDutch, 0.0f, 30.0f) * 0.0174533f;
 		g.orbit = a_orbit;
+		g.orbitFrom = std::clamp(a_orbitFrom, 0.0f, 0.95f);
 		g.orbitSign = g.side < 0.0f ? -1.0f : 1.0f;
 		if (a_orbit) {
 			g.faceSide = 0.0f, g.faceRise = 1.0f, g.faceDistMul = 1.0f, g.faceAimDrop = 12.0f;  // ends straight on the face
@@ -653,12 +656,12 @@ namespace Cutin
 	}
 
 	// any thread: a break asks for a cut-in; it starts on the next ticker update (main thread)
-	inline void Request(RE::Actor* a, std::uint32_t a_mask, bool a_orbit = false)
+	inline void Request(RE::Actor* a, std::uint32_t a_mask, bool a_orbit = false, float a_orbitFrom = 0.0f)
 	{
 		if (!a || g.active || g_pending) {
 			return;
 		}
-		g_pending = Pending{ a->GetHandle(), a_mask, a_orbit, SClock::now() };
+		g_pending = Pending{ a->GetHandle(), a_mask, a_orbit, a_orbitFrom, SClock::now() };
 	}
 
 	// main thread, every ticker update
@@ -670,10 +673,11 @@ namespace Cutin
 		}
 		auto a = g_pending->actor.get();
 		const auto mask = g_pending->mask;
-		const bool orbit = g_pending->orbit;
+		const bool  orbit = g_pending->orbit;
+		const float from = g_pending->orbitFrom;
 		g_pending.reset();
 		if (a) {
-			Start(a.get(), mask, orbit);
+			Start(a.get(), mask, orbit, from);
 		}
 	}
 
@@ -813,14 +817,14 @@ namespace Cutin
 			RE::NiPoint3     rPos;
 			RE::NiQuaternion rRot;
 			if (t < tm.in) {
-				ring(0.0f, 0.0f, rPos, rRot);
+				ring(g.orbitFrom, 0.0f, rPos, rRot);
 				const float k = Ease(t / tm.in);
 				pos = g.fromPos + (rPos - g.fromPos) * k;
 				rot = Slerp(g.fromRot, rRot, k);
 			} else if (t < tm.partHold) {
 				// round to the front over most of the phase, then hold the whole body a moment
 				const float u = std::clamp((t - tm.in) / (0.80f * (tm.partHold - tm.in)), 0.0f, 1.0f);
-				ring(Ease(u), Ease(u), pos, rot);
+				ring(g.orbitFrom + (1.0f - g.orbitFrom) * Ease(u), Ease(u), pos, rot);
 			} else {
 				ring(1.0f, 1.0f, rPos, rRot);
 				const float k = Ease((t - tm.partHold) / (tm.toFace - tm.partHold));

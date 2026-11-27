@@ -193,13 +193,13 @@ namespace
 #include "Cutin.h"
 
 	// whole body (body slot) -> face, the cut lasting about a_seconds
-	void Camera(RE::Actor* a, float a_seconds, bool a_orbit = false)
+	void Camera(RE::Actor* a, float a_seconds, bool a_orbit = false, float a_orbitFrom = 0.0f)
 	{
 		if (!a || !g_settings.camera) {
 			return;
 		}
 		g_settings.cutinLength = std::clamp(a_seconds / 3.25f, 0.3f, 4.0f);
-		Cutin::Request(a, 1u << (32 - 30), a_orbit);
+		Cutin::Request(a, 1u << (32 - 30), a_orbit, a_orbitFrom);
 	}
 
 	// ------------------------------------------------------------------ Papyrus calls
@@ -949,7 +949,7 @@ namespace
 		HoldNpc(a, true);
 		g_collecting = true;
 		VoiceLoop(id, 0.0f, g_settings.collectSeconds, [] { return g_collecting.load(); });
-		Camera(a, g_settings.collectSeconds);
+		Camera(a, g_settings.collectSeconds, true, 0.5f);  // close on his hands from the side, round to the front, waist-up, face
 		Later(g_settings.collectSeconds, [id, anim] {
 			auto a = RE::TESForm::LookupByID<RE::Actor>(id);
 			g_collecting = false;
