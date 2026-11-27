@@ -1639,12 +1639,20 @@ namespace
 		LoadSettings(false);  // MCM changes take effect at once
 		// insertion: animation (when registered), voice, camera, then it is in after insertSeconds
 		static std::mt19937 s_rng{ std::random_device{}() };
-		const char*         insertAnim = (s_rng() & 1) ? "dse-sgo-insert02-01" : "dse-sgo-insert01-01";
-		const bool          egg = a_item == Own(PoolData::kLiveEgg);
-		auto                anio = RE::TESDataHandler::GetSingleton()->LookupForm<RE::TESObjectANIO>(0x8E5, kPlugin);
-		if (anio) {
-			anio->SetModel(egg ? "BFHeredity\\AobjChaurusEgg.nif" : "BFHeredity\\AobjSemenBottle.nif");
+		// SGO4's two insertions, plus SexLab Body Search's "Extra Pocket" when it is installed (its coin bag shows our item)
+		auto*       dh = RE::TESDataHandler::GetSingleton();
+		auto        pocket = dh->LookupForm<RE::TESObjectANIO>(0xBFB55, "BodySearch.esp");
+		const int   pick = static_cast<int>(s_rng() % (pocket ? 3u : 2u));
+		const char* insertAnim = pick == 2 ? "ExtraPocketPullin" : (pick == 1 ? "dse-sgo-insert02-01" : "dse-sgo-insert01-01");
+		const bool  egg = a_item == Own(PoolData::kLiveEgg);
+		const char* held = egg ? "BFHeredity\\AobjChaurusEgg.nif" : "BFHeredity\\AobjSemenBottle.nif";
+		if (auto anio = dh->LookupForm<RE::TESObjectANIO>(0x8E5, kPlugin)) {
+			anio->SetModel(held);
 		}
+		if (pocket) {
+			pocket->SetModel(pick == 2 ? held : "AnimObjects\\BodySearch\\AOBakaCoinbag.nif");
+		}
+		Log("insert: {}", insertAnim);
 		const bool          anim = Anim(pc, insertAnim);
 		HoldPlayer(true);
 		g_inserting = true;
@@ -1668,6 +1676,9 @@ namespace
 			Later(std::max(1.0f, camLen - g_settings.insertSeconds), [anim] {
 				if (anim) {
 					Anim(RE::PlayerCharacter::GetSingleton(), "IdleForceDefaultState");
+				}
+				if (auto pocket = RE::TESDataHandler::GetSingleton()->LookupForm<RE::TESObjectANIO>(0xBFB55, "BodySearch.esp")) {
+					pocket->SetModel("AnimObjects\\BodySearch\\AOBakaCoinbag.nif");  // Body Search's own pocket animation keeps its bag
 				}
 				ReleasePlayerAfterCamera();
 				g_dnaBusy = false;
