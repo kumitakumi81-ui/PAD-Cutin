@@ -50,7 +50,8 @@ namespace
 		bool          inherit = true;
 		bool          nameOnBirth = true;
 		std::uint32_t renameKey = 0x31;  // N
-		bool          useOCum = true;           // OCum Ascended: grade from his stored amount, he is spent after; its look on her after insertion
+		bool          useOCum = true;           // OCum Ascended: its look on her after insertion
+		bool          soloScene = true;         // "collect" plays a SexLab / OStim solo scene (OStrands etc. draw it) instead of Soulgem Oven's animation
 		int           assistFramework = 0;      // "help him" collection: 0 = OStim if loaded else SexLab, 1 = SexLab, 2 = OStim
 		bool          naturalConception = true;  // the DNA goes in as Beeing Female sperm: a child only when she ovulates (BF's own rules)
 		float         testMinDays = 1.0f;        // a pregnancy test shows positive this many days after conception
@@ -157,6 +158,8 @@ namespace
 				g_settings.cutinPlayer = g_settings.camera;
 			} else if (key == "finsertcamerazoom") {
 				g_settings.insertCameraZoom = static_cast<float>(std::atof(val.c_str()));
+			} else if (key == "bsoloscene") {
+				g_settings.soloScene = b();
 			} else if (key == "buseocum") {
 				g_settings.useOCum = b();
 			} else if (key == "iassistframework") {
@@ -1074,40 +1077,8 @@ namespace
 		}
 	}
 
-	// OCum Ascended keeps how much a man has stored (it refills with time, OStim scenes use it up): when it is there, the
-	// grade comes from his share of it and collecting empties him; otherwise Beeing Female's virility decides
-	RE::TESQuest* OCumQuest() { return RE::TESDataHandler::GetSingleton()->LookupForm<RE::TESQuest>(0x800, "OCum.esp"); }
-
-	void GiveDna(RE::FormID id)
-	{
-		auto a = RE::TESForm::LookupByID<RE::Actor>(id);
-		auto oc = g_settings.useOCum ? OCumQuest() : nullptr;
-		if (!a || !oc) {
-			GiveDnaBF(id);
-			return;
-		}
-		CallMethod(
-			oc, "OCumScript", "GetCumStoredAmount",
-			[id](const RE::BSScript::Variable& v) {
-				const float stored = v.IsFloat() ? v.GetFloat() : -1.0f;
-				CallMethod(
-					OCumQuest(), "OCumScript", "GetMaxCumStoragePossible",
-					[id, stored](const RE::BSScript::Variable& m) {
-						const float mx = m.IsFloat() ? m.GetFloat() : 0.0f;
-						auto        a = RE::TESForm::LookupByID<RE::Actor>(id);
-						if (stored < 0.0f || mx <= 0.0f || !a) {
-							GiveDnaBF(id);
-							return;
-						}
-						g_virOverride = std::clamp(stored / mx, 0.0f, 1.0f);
-						Log("OCum: {:08X} has {:.1f} of {:.1f} ml", id, stored, mx);
-						GiveDnaBF(id);
-						CallMethod(OCumQuest(), "OCumScript", "AdjustStoredCumAmount", nullptr, a, -stored, stored);  // he is spent
-					},
-					a);
-			},
-			a);
-	}
+	// the grade always comes from Beeing Female's virility (OCum, OStrands and the like only draw it)
+	void GiveDna(RE::FormID id) { GiveDnaBF(id); }
 
 	void InjectDna(Dna& d)
 	{
@@ -1322,16 +1293,19 @@ namespace
 		g_dnaBusy = false;
 	}
 
-	bool StartAssistOStim(RE::Actor* a_npc)
+	bool StartSceneOStim(RE::Actor* a_npc, bool a_solo)
 	{
 		if (!RE::TESDataHandler::GetSingleton()->LookupModByName("OStim.esp")) {
 			return false;
 		}
 		const RE::FormID           id = a_npc->GetFormID();
-		std::vector<RE::Actor*> actors{ a_npc, RE::PlayerCharacter::GetSingleton() };
+		std::vector<RE::Actor*> actors{ a_npc };
+		if (!a_solo) {
+			actors.push_back(RE::PlayerCharacter::GetSingleton());
+		}
 		CallStatic(
 			"OLibrary", "GetRandomSceneWithAction",
-			[id](const RE::BSScript::Variable& v) {
+			[id, a_solo](const RE::BSScript::Variable& v) {
 				const std::string scene = v.IsString() ? std::string(v.GetString()) : std::string();
 				auto              npc = RE::TESForm::LookupByID<RE::Actor>(id);
 				if (scene.empty() || !npc) {
@@ -1340,7 +1314,10 @@ namespace
 					g_dnaBusy = false;
 					return;
 				}
-				std::vector<RE::Actor*> actors{ npc, RE::PlayerCharacter::GetSingleton() };
+				std::vector<RE::Actor*> actors{ npc };
+				if (!a_solo) {
+					actors.push_back(RE::PlayerCharacter::GetSingleton());
+				}
 				CallStatic(
 					"OThread", "QuickStart",
 					[id, scene](const RE::BSScript::Variable& t) {
@@ -1358,11 +1335,11 @@ namespace
 					},
 					actors, scene, static_cast<RE::TESObjectREFR*>(nullptr));
 			},
-			actors, std::string("handjob"));
+			actors, std::string(a_solo ? "malemasturbation" : "handjob"));
 		return true;
 	}
 
-	bool StartAssistSexLab(RE::Actor* a_npc)
+	bool StartSceneSexLab(RE::Actor* a_npc, bool a_solo)
 	{
 		auto sl = RE::TESDataHandler::GetSingleton()->LookupForm<RE::TESQuest>(0xD62, "SexLab.esm");
 		if (!sl) {
@@ -1384,11 +1361,13 @@ namespace
                         [id] { AssistDone(id); });
                 });
             },
-            static_cast<RE::Actor*>(RE::PlayerCharacter::GetSingleton()), a_npc, none, none, none, none, std::string("BFHCollect"), std::string("Handjob"));
+            a_solo ? a_npc : static_cast<RE::Actor*>(RE::PlayerCharacter::GetSingleton()), a_solo ? none : a_npc, none, none, none, none, std::string("BFHCollect"),
+            std::string(a_solo ? "Masturbation" : "Handjob"));
 		return ok;
 	}
 
-	void AssistFrom(RE::Actor* a)
+	// a_solo: he does it himself in a SexLab / OStim scene (so OStrands, OCum, 3D CumFX and the like draw it); else the player helps
+	void SceneCollect(RE::Actor* a, bool a_solo)
 	{
 		if (!g_settings.dna || !a) {
 			return;
@@ -1399,8 +1378,8 @@ namespace
 		LoadSettings(false);
 		const bool hasOStim = RE::TESDataHandler::GetSingleton()->LookupModByName("OStim.esp") != nullptr;
 		const int  which = g_settings.assistFramework == 0 ? (hasOStim ? 2 : 1) : g_settings.assistFramework;
-		const bool ok = which == 2 ? StartAssistOStim(a) : StartAssistSexLab(a);
-		Log("assist: {} with {:08X}: {}", which == 2 ? "OStim" : "SexLab", a->GetFormID(), ok ? "asked" : "not available");
+		const bool ok = which == 2 ? StartSceneOStim(a, a_solo) : StartSceneSexLab(a, a_solo);
+		Log("scene collect ({}): {} with {:08X}: {}", a_solo ? "solo" : "assist", which == 2 ? "OStim" : "SexLab", a->GetFormID(), ok ? "asked" : "not available");
 		if (!ok) {
 			Notify(which == 2 ? "OStim が見つかりません" : "SexLab が見つかりません");
 			g_dnaBusy = false;
@@ -1422,7 +1401,7 @@ namespace
 			}();
 			const RE::FormID who = a_event->speakerRef->GetFormID();
 			if (a_event->topicInfoFormID == Own(PoolData::kAssistInfo)) {
-				Later(1.0f, [who] { AssistFrom(RE::TESForm::LookupByID<RE::Actor>(who)); });
+				Later(1.0f, [who] { SceneCollect(RE::TESForm::LookupByID<RE::Actor>(who), false); });
 				return RE::BSEventNotifyControl::kContinue;
 			}
 			for (std::size_t i = 0; i < std::size(PoolData::kTellInfos); ++i) {
@@ -1435,7 +1414,13 @@ namespace
 				return RE::BSEventNotifyControl::kContinue;
 			}
 			Later(1.0f, [who] {  // let the dialogue menu close first
-				CollectFrom(RE::TESForm::LookupByID<RE::Actor>(who));
+				LoadSettings(false);
+				auto a = RE::TESForm::LookupByID<RE::Actor>(who);
+				if (g_settings.soloScene && a && !a->IsChild() && a->GetActorBase() && (!g_settings.maleOnly || a->GetActorBase()->GetSex() == RE::SEX::kMale)) {
+					SceneCollect(a, true);
+				} else {
+					CollectFrom(a);
+				}
 			});
 			return RE::BSEventNotifyControl::kContinue;
 		}
