@@ -1,7 +1,7 @@
 # BF Heredity - Beeing Female NG children inherit both parents' looks, and keep the name you give them
 # SPDX-License-Identifier: GPL-3.0-or-later
 cmake_minimum_required(VERSION 3.21)
-project(BFHeredity VERSION 0.14.3 LANGUAGES CXX)
+project(BFHeredity VERSION 0.14.4 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
