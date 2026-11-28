@@ -65,6 +65,9 @@ namespace
 		bool          leakAfterInsert = true;   // after a vial is poured in, some may come back out later (closed-legs walk + drip)
 		float         leakChance = 0.6f;
 		float         leakSeconds = 45.0f;
+		bool          leakCamera = true;        // the moment it starts: third person, camera eases in low and gives a small jolt
+		bool          leakReaction = true;      // the moment it starts: she stops short, flinches, glances around, a small gasp
+		float         leakSlowmo = 0.35f;       // the moment it starts: time runs at this speed for half a second (1 = off)
 		bool          wombHud = true;           // the womb HUD (cycle, what is inside, whose child) and the floating lines
 		float         hudScale = 1.0f;
 		std::int32_t  hudCorner = 0;            // 0 bottom left, 1 bottom right, 2 top left, 3 top right
@@ -221,6 +224,12 @@ namespace
 				g_settings.leakChance = static_cast<float>(std::atof(val.c_str()));
 			} else if (key == "fleakseconds") {
 				g_settings.leakSeconds = static_cast<float>(std::atof(val.c_str()));
+			} else if (key == "bleakcamera") {
+				g_settings.leakCamera = b();
+			} else if (key == "bleakreaction") {
+				g_settings.leakReaction = b();
+			} else if (key == "fleakslowmo") {
+				g_settings.leakSlowmo = static_cast<float>(std::atof(val.c_str()));
 			} else if (key == "bwombhud") {
 				g_settings.wombHud = b();
 			} else if (key == "fhudscale") {
@@ -2871,7 +2880,7 @@ namespace
 		if (g_leak.armour) {
 			if (auto arm = RE::TESForm::LookupByID<RE::TESObjectARMO>(g_leak.armour)) {
 				CallMethod(static_cast<RE::Actor*>(pc), "Actor", "UnequipItem", nullptr, static_cast<RE::TESForm*>(arm), false, true);
-				CallMethod(static_cast<RE::ObjectReference*>(pc), "ObjectReference", "RemoveItem", nullptr, static_cast<RE::TESForm*>(arm), static_cast<std::int32_t>(1), true,
+				CallMethod(static_cast<RE::TESObjectREFR*>(pc), "ObjectReference", "RemoveItem", nullptr, static_cast<RE::TESForm*>(arm), static_cast<std::int32_t>(1), true,
 					static_cast<RE::TESObjectREFR*>(nullptr));
 			}
 		}
@@ -2887,6 +2896,96 @@ namespace
 	}
 
 	// a_kind 1 = front, 2 = back; lasts a_seconds, then she is herself again
+
+	// the moment a leak starts: slow motion, the camera drawn in low, and her reaction
+	struct LeakCam { bool saved = false; bool wasFirst = false; float zoom = 0.0f; RE::NiPoint3 off{}; };
+	LeakCam g_leakCam;
+
+	RE::ThirdPersonState* ThirdPerson()
+	{
+		auto cam = RE::PlayerCamera::GetSingleton();
+		if (!cam || !cam->currentState || cam->currentState->id != RE::CameraState::kThirdPerson) {
+			return nullptr;
+		}
+		return static_cast<RE::ThirdPersonState*>(cam->currentState.get());
+	}
+
+	void LeakCamRestore()
+	{
+		if (!g_leakCam.saved) {
+			return;
+		}
+		g_leakCam.saved = false;
+		if (auto tp = ThirdPerson()) {
+			tp->targetZoomOffset = g_leakCam.zoom;
+			tp->posOffsetExpected = g_leakCam.off;
+		}
+		if (g_leakCam.wasFirst) {
+			if (auto cam = RE::PlayerCamera::GetSingleton()) {
+				cam->ForceFirstPerson();
+			}
+		}
+	}
+
+	void LeakMoment()
+	{
+		auto pc = RE::PlayerCharacter::GetSingleton();
+		if (!pc || pc->IsInCombat() || pc->IsOnMount() || Cutin::g.active) {
+			return;
+		}
+		// slow motion: half a real second
+		if (g_settings.leakSlowmo > 0.05f && g_settings.leakSlowmo < 0.99f) {
+			if (auto t = RE::BSTimer::GetSingleton()) {
+				t->SetGlobalTimeMultiplier(g_settings.leakSlowmo, true);
+				Later(0.5f, [] {
+					if (auto t2 = RE::BSTimer::GetSingleton()) {
+						t2->SetGlobalTimeMultiplier(1.0f, true);
+					}
+				});
+			}
+		}
+		// camera: third person, eased in and down to the hips, a small jolt, then back after ~2.5 s
+		if (g_settings.leakCamera && !g_leakCam.saved) {
+			auto cam = RE::PlayerCamera::GetSingleton();
+			if (cam) {
+				g_leakCam.wasFirst = cam->IsInFirstPerson();
+				if (g_leakCam.wasFirst) {
+					cam->ForceThirdPerson();
+				}
+				Later(0.15f, [] {
+					if (auto tp = ThirdPerson()) {
+						g_leakCam.zoom = tp->targetZoomOffset;
+						g_leakCam.off = tp->posOffsetExpected;
+						g_leakCam.saved = true;
+						tp->targetZoomOffset = 0.0f;            // pulled in close
+						tp->posOffsetExpected.z -= 28.0f;        // looking at the hips
+						tp->posOffsetExpected.x += 12.0f;        // a little off to the side
+					}
+					CallStatic("Game", "ShakeCamera", nullptr, static_cast<RE::TESObjectREFR*>(nullptr), 0.18f, 0.35f);
+					CallStatic("Game", "ShakeController", nullptr, 0.2f, 0.35f, 0.3f);
+				});
+				Later(2.8f, [] { LeakCamRestore(); });
+			}
+		}
+		// her reaction: stop short and flinch, a small gasp, then glance around
+		if (g_settings.leakReaction) {
+			HoldPlayer(true);
+			if (!Anim(pc, "IdleNervous")) {
+				Anim(pc, "IdleWipeBrow");
+			}
+			Voice(pc, Heat::kMild);
+			Face(9, 55, 40);  // startled
+			Later(1.4f, [] {
+				Face(13, 70, 25);  // flustered, eyes down
+			});
+			Later(2.2f, [] {
+				auto p = RE::PlayerCharacter::GetSingleton();
+				Anim(p, "IdleStop");
+				HoldPlayer(false);
+			});
+		}
+	}
+
 	void LeakStart(int a_kind, float a_seconds)
 	{
 		auto pc = RE::PlayerCharacter::GetSingleton();
@@ -2903,7 +3002,7 @@ namespace
 		// Fill Her Up's drip piece when it is installed
 		auto dh = RE::TESDataHandler::GetSingleton();
 		if (auto arm = dh->LookupForm<RE::TESObjectARMO>(a_kind == 2 ? 0x3319 : 0x3318, "sr_FillHerUp.esp")) {
-			const auto slot = arm->GetSlotMask();
+			const auto slot = arm->GetSlotMask().get();
 			if (auto worn = pc->GetWornArmor(slot); worn && worn != arm) {
 				g_leak.displaced = worn->GetFormID();
 			}
@@ -2913,6 +3012,7 @@ namespace
 		}
 		Face(13, 60, 20);  // flustered
 		Blush(20.0f);
+		LeakMoment();
 		Notify(a_kind == 2 ? "……後ろから、じわりと漏れてくる" : "……脚のあいだを、じわりと伝っていく");
 		Log("leak start kind {} for {:.0f}s", a_kind, a_seconds);
 		Later(a_seconds, [ser] {
@@ -4201,6 +4301,7 @@ namespace
 		case SKSE::MessagingInterface::kPostLoadGame:
 		case SKSE::MessagingInterface::kNewGame:
 			SKSE::GetTaskInterface()->AddTask([] {
+				if (auto t = RE::BSTimer::GetSingleton()) { t->SetGlobalTimeMultiplier(1.0f, true); }
 				LeakStop();  // the faction lives in the save; never come back stuck in the leaking walk
 				g_ready = true;
 				for (auto& s : g_slots) {
