@@ -62,6 +62,9 @@ namespace
 		bool          blush = true;              // raise SexLab Aroused exposure at those moments, so Blush When Aroused reddens her face
 		bool          insertFace = true;        // her face during insertion (nervous, the moment it goes in, relief)
 		bool          insertShake = true;       // camera shake + controller rumble the moment it goes in
+		bool          leakAfterInsert = true;   // after a vial is poured in, some may come back out later (closed-legs walk + drip)
+		float         leakChance = 0.6f;
+		float         leakSeconds = 45.0f;
 		bool          wombHud = true;           // the womb HUD (cycle, what is inside, whose child) and the floating lines
 		float         hudScale = 1.0f;
 		std::int32_t  hudCorner = 0;            // 0 bottom left, 1 bottom right, 2 top left, 3 top right
@@ -212,6 +215,12 @@ namespace
 				g_settings.insertFace = b();
 			} else if (key == "binsertshake") {
 				g_settings.insertShake = b();
+			} else if (key == "bleakafterinsert") {
+				g_settings.leakAfterInsert = b();
+			} else if (key == "fleakchance") {
+				g_settings.leakChance = static_cast<float>(std::atof(val.c_str()));
+			} else if (key == "fleakseconds") {
+				g_settings.leakSeconds = static_cast<float>(std::atof(val.c_str()));
 			} else if (key == "bwombhud") {
 				g_settings.wombHud = b();
 			} else if (key == "fhudscale") {
@@ -2837,6 +2846,82 @@ namespace
 		}
 	}
 
+	// ------------------------------------------------------------------ 0.15: leaking (closed-legs walk via OAR, Fill Her Up's drip)
+	// While she is in BFH_LeakingFaction our OAR sub-mod swaps in the Modesty pack's closed-legs walk / run / idle.
+	// Fill Her Up's own drip armour (sr_vagLeak / sr_analLeak) shows it on her body; she keeps walking.
+	struct LeakState
+	{
+		bool          on = false;
+		int           kind = 0;     // 1 front, 2 back
+		RE::FormID    armour = 0;   // the drip piece we put on
+		RE::FormID    displaced = 0;  // what it pushed off that slot
+		std::uint32_t serial = 0;
+	};
+	LeakState g_leak;
+
+	void LeakStop()
+	{
+		auto pc = RE::PlayerCharacter::GetSingleton();
+		if (!pc) {
+			return;
+		}
+		if (auto fac = RE::TESForm::LookupByID<RE::TESFaction>(Own(PoolData::kLeakFaction))) {
+			CallMethod(static_cast<RE::Actor*>(pc), "Actor", "RemoveFromFaction", nullptr, fac);
+		}
+		if (g_leak.armour) {
+			if (auto arm = RE::TESForm::LookupByID<RE::TESObjectARMO>(g_leak.armour)) {
+				CallMethod(static_cast<RE::Actor*>(pc), "Actor", "UnequipItem", nullptr, static_cast<RE::TESForm*>(arm), false, true);
+				CallMethod(static_cast<RE::ObjectReference*>(pc), "ObjectReference", "RemoveItem", nullptr, static_cast<RE::TESForm*>(arm), static_cast<std::int32_t>(1), true,
+					static_cast<RE::TESObjectREFR*>(nullptr));
+			}
+		}
+		if (g_leak.displaced) {
+			if (auto prev = RE::TESForm::LookupByID<RE::TESObjectARMO>(g_leak.displaced)) {
+				CallMethod(static_cast<RE::Actor*>(pc), "Actor", "EquipItem", nullptr, static_cast<RE::TESForm*>(prev), false, true);
+			}
+		}
+		if (g_leak.on) {
+			Face(-1, 0);
+		}
+		g_leak = LeakState{ false, 0, 0, 0, g_leak.serial };
+	}
+
+	// a_kind 1 = front, 2 = back; lasts a_seconds, then she is herself again
+	void LeakStart(int a_kind, float a_seconds)
+	{
+		auto pc = RE::PlayerCharacter::GetSingleton();
+		if (!pc || g_leak.on) {
+			return;
+		}
+		auto fac = RE::TESForm::LookupByID<RE::TESFaction>(Own(PoolData::kLeakFaction));
+		if (fac) {
+			pc->AddToFaction(fac, 0);
+		}
+		g_leak.on = true;
+		g_leak.kind = a_kind;
+		const std::uint32_t ser = ++g_leak.serial;
+		// Fill Her Up's drip piece when it is installed
+		auto dh = RE::TESDataHandler::GetSingleton();
+		if (auto arm = dh->LookupForm<RE::TESObjectARMO>(a_kind == 2 ? 0x3319 : 0x3318, "sr_FillHerUp.esp")) {
+			const auto slot = arm->GetSlotMask();
+			if (auto worn = pc->GetWornArmor(slot); worn && worn != arm) {
+				g_leak.displaced = worn->GetFormID();
+			}
+			pc->AddObjectToContainer(arm, nullptr, 1, nullptr);
+			CallMethod(static_cast<RE::Actor*>(pc), "Actor", "EquipItem", nullptr, static_cast<RE::TESForm*>(arm), false, true);
+			g_leak.armour = arm->GetFormID();
+		}
+		Face(13, 60, 20);  // flustered
+		Blush(20.0f);
+		Notify(a_kind == 2 ? "……後ろから、じわりと漏れてくる" : "……脚のあいだを、じわりと伝っていく");
+		Log("leak start kind {} for {:.0f}s", a_kind, a_seconds);
+		Later(a_seconds, [ser] {
+			if (g_leak.on && g_leak.serial == ser) {
+				LeakStop();
+			}
+		});
+	}
+
 	bool g_hideOnly = false;  // the Night Pact: the bottle goes in to be hidden, not used
 	void HiddenVialIn(RE::FormID a_item);
 	void StartInsert(RE::FormID a_item)
@@ -2882,6 +2967,10 @@ namespace
 				CarryEggs();
 			} else if (auto d = DnaByItem(a_item)) {
 				InjectDna(*d);
+				if (g_settings.leakAfterInsert && std::uniform_real_distribution<float>(0, 1)(s_rng) < g_settings.leakChance) {
+					const float wait = std::uniform_real_distribution<float>(25.0f, 70.0f)(s_rng);
+					Later(wait, [] { LeakStart(1, g_settings.leakSeconds); });
+				}
 				// OCum's look of it on her (its mesh / overlay, by OCum's own settings)
 				if (auto om = g_settings.useOCum ? RE::TESDataHandler::GetSingleton()->LookupForm<RE::TESQuest>(0xF38, "OCum.esp") : nullptr) {
 					const std::int32_t intensity = d->tier >= 100 ? 4 : (d->tier >= 50 ? 2 : 1);
@@ -3441,6 +3530,7 @@ namespace
 			g_night.vial = 0;
 			Blush(30.0f);
 			Notify("……走っている間に、小瓶の封が緩んでいた。中身はもう瓶の中にはない");
+			LeakStart(1, g_settings.leakSeconds);
 		}
 		if (g_night.vial) {
 			if (auto item = RE::TESForm::LookupByID<RE::TESBoundObject>(g_night.vial)) {
@@ -4111,6 +4201,7 @@ namespace
 		case SKSE::MessagingInterface::kPostLoadGame:
 		case SKSE::MessagingInterface::kNewGame:
 			SKSE::GetTaskInterface()->AddTask([] {
+				LeakStop();  // the faction lives in the save; never come back stuck in the leaking walk
 				g_ready = true;
 				for (auto& s : g_slots) {
 					if (s.state == State::kApplied) {

@@ -124,5 +124,6 @@ inline constexpr std::uint32_t kNightPry = 0x95F;
 inline constexpr std::uint32_t kNightStartMsg = 0x960;
 inline constexpr std::uint32_t kNightHowMsg = 0x961;
 inline constexpr std::uint32_t kNightHideMsg = 0x962;
+inline constexpr std::uint32_t kLeakFaction = 0x964;
 inline constexpr std::uint32_t kTellInfos[] = {0x8F5, 0x8F6, 0x8F7, 0x8F8};
 }
