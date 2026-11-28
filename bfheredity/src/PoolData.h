@@ -126,4 +126,5 @@ inline constexpr std::uint32_t kNightHowMsg = 0x961;
 inline constexpr std::uint32_t kNightHideMsg = 0x962;
 inline constexpr std::uint32_t kLeakFaction = 0x964;
 inline constexpr std::uint32_t kTellInfos[] = {0x8F5, 0x8F6, 0x8F7, 0x8F8};
+inline constexpr std::uint32_t kLeakTrail[] = {0x966, 0x968, 0x96A, 0x96C, 0x96E, 0x970};  // f1 f2 f3 b1 b2 b3
 }

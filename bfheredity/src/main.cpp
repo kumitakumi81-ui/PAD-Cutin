@@ -68,6 +68,7 @@ namespace
 		bool          leakCamera = true;        // the moment it starts: third person, camera eases in low and gives a small jolt
 		bool          leakReaction = true;      // the moment it starts: she stops short, flinches, glances around, a small gasp
 		float         leakSlowmo = 0.35f;       // the moment it starts: time runs at this speed for half a second (1 = off)
+		bool          leakTrail = true;         // wet trails flowing down the inner thighs while she leaks
 		bool          wombHud = true;           // the womb HUD (cycle, what is inside, whose child) and the floating lines
 		float         hudScale = 1.0f;
 		std::int32_t  hudCorner = 0;            // 0 bottom left, 1 bottom right, 2 top left, 3 top right
@@ -228,6 +229,8 @@ namespace
 				g_settings.leakCamera = b();
 			} else if (key == "bleakreaction") {
 				g_settings.leakReaction = b();
+			} else if (key == "bleaktrail") {
+				g_settings.leakTrail = b();
 			} else if (key == "fleakslowmo") {
 				g_settings.leakSlowmo = static_cast<float>(std::atof(val.c_str()));
 			} else if (key == "bwombhud") {
@@ -2868,6 +2871,46 @@ namespace
 	};
 	LeakState g_leak;
 
+	// wet trails down the inner thighs: our own skinned meshes whose texture keeps flowing down; a longer one swapped in as it goes on
+	RE::FormID g_trail = 0;
+	void TrailOff()
+	{
+		auto pc = RE::PlayerCharacter::GetSingleton();
+		if (!pc) {
+			return;
+		}
+		for (auto id : PoolData::kLeakTrail) {
+			if (auto arm = RE::TESForm::LookupByID<RE::TESObjectARMO>(Own(id))) {
+				CallMethod(static_cast<RE::Actor*>(pc), "Actor", "UnequipItem", nullptr, static_cast<RE::TESForm*>(arm), false, true);
+				CallMethod(static_cast<RE::TESObjectREFR*>(pc), "ObjectReference", "RemoveItem", nullptr, static_cast<RE::TESForm*>(arm), static_cast<std::int32_t>(99), true,
+					static_cast<RE::TESObjectREFR*>(nullptr));
+			}
+		}
+		g_trail = 0;
+	}
+	void TrailWear(int a_kind, int a_stage)  // a_kind 1 front / 2 back, a_stage 1..3
+	{
+		auto pc = RE::PlayerCharacter::GetSingleton();
+		if (!pc || !g_settings.leakTrail) {
+			return;
+		}
+		const auto idx = (a_kind == 2 ? 3 : 0) + std::clamp(a_stage, 1, 3) - 1;
+		auto       arm = RE::TESForm::LookupByID<RE::TESObjectARMO>(Own(PoolData::kLeakTrail[idx]));
+		if (!arm) {
+			return;
+		}
+		const auto prev = g_trail;
+		pc->AddObjectToContainer(arm, nullptr, 1, nullptr);
+		CallMethod(static_cast<RE::Actor*>(pc), "Actor", "EquipItem", nullptr, static_cast<RE::TESForm*>(arm), false, true);
+		g_trail = arm->GetFormID();
+		if (prev && prev != g_trail) {
+			if (auto old = RE::TESForm::LookupByID<RE::TESObjectARMO>(prev)) {
+				CallMethod(static_cast<RE::TESObjectREFR*>(pc), "ObjectReference", "RemoveItem", nullptr, static_cast<RE::TESForm*>(old), static_cast<std::int32_t>(1), true,
+					static_cast<RE::TESObjectREFR*>(nullptr));
+			}
+		}
+	}
+
 	void LeakStop()
 	{
 		auto pc = RE::PlayerCharacter::GetSingleton();
@@ -2889,6 +2932,7 @@ namespace
 				CallMethod(static_cast<RE::Actor*>(pc), "Actor", "EquipItem", nullptr, static_cast<RE::TESForm*>(prev), false, true);
 			}
 		}
+		TrailOff();
 		if (g_leak.on) {
 			Face(-1, 0);
 		}
@@ -3013,6 +3057,18 @@ namespace
 		Face(13, 60, 20);  // flustered
 		Blush(20.0f);
 		LeakMoment();
+		// the trail starts short and creeps down toward the knees
+		TrailWear(a_kind, 1);
+		Later(std::max(4.0f, a_seconds * 0.25f), [ser, a_kind] {
+			if (g_leak.on && g_leak.serial == ser) {
+				TrailWear(a_kind, 2);
+			}
+		});
+		Later(std::max(8.0f, a_seconds * 0.55f), [ser, a_kind] {
+			if (g_leak.on && g_leak.serial == ser) {
+				TrailWear(a_kind, 3);
+			}
+		});
 		Notify(a_kind == 2 ? "……後ろから、じわりと漏れてくる" : "……脚のあいだを、じわりと伝っていく");
 		Log("leak start kind {} for {:.0f}s", a_kind, a_seconds);
 		Later(a_seconds, [ser] {
